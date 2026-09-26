@@ -1,101 +1,88 @@
 # Setup
 
-## 1. Create the R2 bucket
+## Install the extension
 
-Create the bucket you want this tool to own, for example:
+Load the `extension/` directory as an unpacked extension in Chrome or Edge.
 
-```text
-webrev-assets
-```
+The extension includes:
 
-Do not put R2 account keys in this repository.
+- dynamic right-click menus
+- a popup for pasted URLs
+- destination profile settings
+- direct Cloudflare Worker support
+- direct GitHub workflow dispatch
 
-## 2. Configure the Worker binding
+No desktop app is required for v1.
 
-Edit `wrangler.toml`:
+## Add a Cloudflare R2 destination
 
-```toml
-[[r2_buckets]]
-binding = "ASSETS"
-bucket_name = "webrev-assets"
-```
+Create or deploy the included Worker and bind it to the R2 bucket you want to use.
 
-Optionally set the public asset base URL:
-
-```toml
-[vars]
-PUBLIC_ASSET_BASE_URL = "https://assets.webrev.online"
-```
-
-For stricter remote-source security, set an allowlist:
-
-```toml
-[vars]
-ALLOWED_SOURCE_HOSTS = "example.com,cdn.example.net"
-```
-
-If `ALLOWED_SOURCE_HOSTS` is blank, public HTTPS hosts are allowed except obvious localhost/private-address targets.
-
-## 3. Create the Worker secret
-
-Generate a long random token locally and deploy it as a Worker secret:
+Set the Worker secret:
 
 ```bash
 npx wrangler secret put INGEST_TOKEN
 ```
 
-Then deploy:
+Then add a **Cloudflare R2** profile in the extension settings with:
 
-```bash
-npm install
-npm run deploy
-```
+- display name
+- Worker ingest URL
+- Worker token
+- 2D / 3D / files folder names
 
-## 4. Configure the local bridge
-
-Copy:
+The actual file transfer is:
 
 ```text
-.env.example -> .env
+remote source -> Worker -> R2
 ```
 
-Fill in only your own deployed Worker URL and the same ingest token.
+## Add a GitHub destination
 
-```env
-REMOTE_INGEST_URL=https://remote-download-2-cloudflare.<account>.workers.dev/ingest
-REMOTE_INGEST_TOKEN=your-long-random-secret
-LOCAL_PORT=8765
-```
+Add a **GitHub** profile with:
 
-The `.env` file is ignored by Git.
+- repository in `owner/name` form
+- target branch
+- workflow filename
+- token
+- 2D / 3D / files paths
 
-Run:
+On first use, if the configured workflow is missing, the extension installs the
+small generic workflow automatically, then dispatches it.
 
-```bash
-npm run bridge
-```
+The workflow contains no hardcoded repository name.
 
-The bridge listens only on `127.0.0.1`.
-
-## 5. Load the browser extension
-
-In Chrome/Edge:
-
-1. Open the extensions page.
-2. Enable Developer mode.
-3. Load unpacked.
-4. Select the `extension/` folder.
-
-Now right-click a link/image/page and use one of the **Send URL to Cloudflare** commands.
-
-## What touches the local computer?
-
-Only the URL and small JSON responses.
-
-The asset bytes travel:
+The actual file transfer is:
 
 ```text
-remote source -> Cloudflare Worker -> R2
+remote source -> GitHub Actions runner -> repository
 ```
 
-They are not downloaded by the local bridge.
+## Token scope
+
+Use the narrowest token permissions practical for the chosen destination.
+
+The extension-only v1 stores configured credentials in `chrome.storage.local`.
+A future desktop companion can move secrets into OS-protected storage without
+changing the destination-profile format.
+
+## Right-click use
+
+After saving profiles:
+
+```text
+Send Remote Asset
+  → My R2 Assets
+      → 3D
+      → 2D
+      → Files
+  → My GitHub Assets
+      → 3D
+      → 2D
+      → Files
+```
+
+## Paste-a-URL fallback
+
+Click the extension icon, paste the source URL, optionally provide a filename,
+choose destination and type, then press **Send**.
