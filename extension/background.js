@@ -353,7 +353,10 @@ async function provisionCloudflareProfile({ accountId, accountName, bucketName, 
       "2d": folders?.["2d"] || "2d",
       "3d": folders?.["3d"] || "3d",
       "files": folders?.files || "files"
-    }
+    },
+    defaultCategory: "files",
+    showInContextMenu: true,
+    menuOrder: profiles.length
   };
   if (existingIndex >= 0) profiles[existingIndex] = profile;
   else profiles.push(profile);
@@ -476,15 +479,18 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (area === "local" && changes.profiles) rebuildMenus();
 });
 chrome.contextMenus.onClicked.addListener(async info => {
-  if (info.menuItemId === "redown-setup") return chrome.runtime.openOptionsPage();
-  const match = String(info.menuItemId).match(/^send:([^:]+):(3d|2d|files)$/);
+  if (info.menuItemId === "redown-setup" || info.menuItemId === "redown-manage") {
+    return chrome.runtime.openOptionsPage();
+  }
+  const match = String(info.menuItemId).match(/^quick:([^:]+)$/);
   if (!match) return;
   const profiles = await getProfiles();
   const profile = profiles.find(p => p.id === match[1]);
   if (!profile) return notify("REDOWN", "That destination no longer exists.");
   const sourceUrl = selectedUrl(info);
+  const category = profile.defaultCategory || "files";
   try {
-    const location = await ingest(profile, sourceUrl, match[2]);
+    const location = await ingest(profile, sourceUrl, category);
     await notify("REDOWN complete", location);
   } catch (error) {
     await notify("REDOWN failed", error?.message || String(error));
