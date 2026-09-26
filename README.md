@@ -1,50 +1,77 @@
-# Remote Asset Ingest
+# REDOWN
 
-A Chrome/Edge extension for sending a remote asset URL directly to either:
+**Remote downloads, without the download.**
 
-- Cloudflare R2, through a configured Worker
-- a GitHub repository, through a small generic workflow the extension can install automatically
+REDOWN is a Chrome/Edge extension that sends remote files directly to a configured Cloudflare R2 bucket or GitHub repository. The source file does not need to pass through the user's computer.
 
-The asset does not need to be downloaded through the user's computer first.
+## Install from GitHub
 
-## Normal use
+1. Download this repository as a ZIP.
+2. Extract it.
+3. Open `chrome://extensions`.
+4. Enable **Developer mode**.
+5. Choose **Load unpacked**.
+6. Select the extracted repository's **`extension/`** folder.
 
-1. Install the extension.
-2. Add one or more destination profiles.
-3. Right-click a link, image, video, audio item, or page.
-4. Choose **Send Remote Asset** → destination → 2D / 3D / Files.
+The selected folder must contain `manifest.json`.
 
-The popup also provides a paste-a-URL fallback.
+## Cloudflare
 
-## Transfer paths
+REDOWN uses Cloudflare OAuth. Users click **Connect Cloudflare**, authorize REDOWN, then choose or create an R2 bucket.
 
-Cloudflare:
+REDOWN provisions a small Worker bound to that bucket so the data path stays:
 
 ```text
 remote source -> Cloudflare Worker -> R2
 ```
 
-GitHub:
+The user's computer sends control metadata only.
+
+OAuth publisher:
+- Client ID: `D9db0f71eb24cd2eed86b50a650a045e`
+- Verified publisher domain: `webrev.online`
+- Browser callback: `https://mkadkgpekmkknfbniacdlmgikihjjepf.chromiumapp.org/cloudflare`
+
+No OAuth client secret is embedded in the extension. REDOWN uses Authorization Code + PKCE.
+
+## Right-click presets
+
+Every saved destination controls its own right-click behavior.
+
+A bucket can be a one-click destination:
+
+```text
+REDOWN
+  -> webrev-assets
+```
+
+or an arbitrary-depth tree:
+
+```text
+REDOWN
+  -> webrev-assets
+      -> 3D
+          -> Characters
+              -> Heroes
+              -> NPCs
+      -> 2D
+          -> Portraits
+```
+
+Each leaf can target its own R2 prefix or GitHub path. Different buckets can have completely different menu depths and defaults.
+
+## GitHub
+
+A GitHub profile can remotely fetch through GitHub Actions:
 
 ```text
 remote source -> GitHub Actions runner -> target repository
 ```
 
-The extension only sends control metadata such as the source URL, destination,
-path, and filename.
+REDOWN can install its generic ingest workflow into the selected repository when needed.
 
-## Destination independence
+## Repository independence
 
-Nothing in the runtime protocol depends on this repository name.
-
-Cloudflare Worker URLs, bucket-facing paths, GitHub repositories, branches,
-workflow filenames, and destination folders are all profile configuration.
-
-Renaming this repository does not change the extension protocol.
-
-## Desktop app later
-
-A native Windows companion may be added later for stronger OS-protected secret
-storage and additional integrations. It is not required for extension v1.
+No runtime behavior depends on this repository's name. Destination repository names, Cloudflare accounts, buckets, paths, menu trees, and labels are user configuration.
 
 See `SETUP.md` and `DESTINATIONS.md`.
