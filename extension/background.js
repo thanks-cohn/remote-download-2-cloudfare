@@ -25,7 +25,7 @@ function selectedUrl(info) {
 async function notify(title, message) {
   await chrome.notifications.create({
     type: "basic",
-    iconUrl: "icon128.png",
+    iconUrl: "icon.svg",
     title,
     message
   });
