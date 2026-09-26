@@ -1,0 +1,37 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Remote Asset Ingest — Destinations</title>
+  <style>
+    body { font:14px system-ui,sans-serif; max-width:920px; margin:36px auto; padding:0 20px; color:#111827; }
+    h1 { margin-bottom:6px; }
+    .note { color:#6b7280; margin-bottom:22px; }
+    .profile { border:1px solid #d1d5db; border-radius:12px; padding:16px; margin:14px 0; }
+    .grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+    label { display:block; font-weight:600; margin-bottom:4px; }
+    input, select { width:100%; box-sizing:border-box; padding:9px; border:1px solid #cbd5e1; border-radius:8px; }
+    button { padding:9px 14px; border:0; border-radius:8px; cursor:pointer; }
+    .primary { background:#111827; color:white; }
+    .danger { background:#fee2e2; color:#991b1b; }
+    .actions { display:flex; gap:8px; margin-top:14px; }
+    code { background:#f3f4f6; padding:2px 5px; border-radius:4px; }
+  </style>
+</head>
+<body>
+  <h1>Destination Profiles</h1>
+  <p class="note">Configure Cloudflare R2 or GitHub once. The extension builds its right-click menu from these profiles. Nothing depends on this repository's name.</p>
+
+  <div id="profiles"></div>
+
+  <div class="actions">
+    <button id="add-cloudflare" class="primary">Add Cloudflare R2</button>
+    <button id="add-github" class="primary">Add GitHub</button>
+    <button id="save">Save</button>
+  </div>
+
+  <p class="note">Extension-only v1 stores profile credentials in <code>chrome.storage.local</code>. A later desktop companion can move secrets into OS-protected storage without changing the destination/profile format.</p>
+
+  <script src="options.js"></script>
+</body>
+</html>
