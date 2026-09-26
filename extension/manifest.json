@@ -3,7 +3,12 @@
   "name": "Remote Asset Ingest",
   "version": "0.2.0",
   "description": "Send remote assets directly to Cloudflare R2 or GitHub without downloading them through your computer.",
-  "permissions": ["contextMenus", "notifications", "storage"],
+  "permissions": [
+    "contextMenus",
+    "notifications",
+    "storage",
+    "identity"
+  ],
   "host_permissions": [
     "https://api.github.com/*",
     "https://*/*"
@@ -15,5 +20,6 @@
     "default_title": "Remote Asset Ingest",
     "default_popup": "popup.html"
   },
-  "options_page": "options.html"
+  "options_page": "options.html",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAue/TphJ8cRWRb1enAQ99He5Iv+/j+hhjwEI97+dAydI5iDadmkbu9fnw8jHKcyL27o5R+MpbtsYMFe9r56srsASJ32Lfc3mhgugL1fQhtcf4yz61XhHZmg4cfk1Ou7tLJI69IjClEzQGJCgT2Bs/8Vvc/kl1qr9gqOPMs/X7O0A44AhgUcntsJpEBmTrYcPB3PHEFpiyfCeo11x5UWvXerSZ7n5y01TB0FcRn+KmmCrMS8vdmUmY3cQtzbdnjwy7/JUPfJVfLfMgDxEjupyP9mhyEZxcbOM1i3xwktWAWHhz7xWjsOvTXZsQWT6QMDb5cpwXb2TnfJ5wCpcCiyzOlwIDAQAB"
 }
