@@ -1,13 +1,14 @@
 {
   "manifest_version": 3,
   "name": "REDOWN",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Send remote files straight to Cloudflare R2 or GitHub without downloading them through your computer.",
   "permissions": [
     "contextMenus",
     "notifications",
     "storage",
-    "identity"
+    "identity",
+    "downloads"
   ],
   "host_permissions": [
     "https://api.github.com/*",
