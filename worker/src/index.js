@@ -62,6 +62,26 @@ function sanitizeFilename(value) {
   return clean;
 }
 
+async function fetchRemoteSafely(source, allowedHosts, maxRedirects = 5) {
+  let current = source;
+
+  for (let i = 0; i <= maxRedirects; i++) {
+    const response = await fetch(current.toString(), {
+      redirect: "manual",
+      headers: { "user-agent": "remote-download-2-cloudflare/0.1" }
+    });
+
+    if (![301, 302, 303, 307, 308].includes(response.status)) return response;
+
+    const location = response.headers.get("location");
+    if (!location) throw new Error("Remote redirect was missing Location");
+
+    current = validateSourceUrl(new URL(location, current).toString(), allowedHosts);
+  }
+
+  throw new Error("Too many remote redirects");
+}
+
 function makeLimiter(maxBytes, counter) {
   return new TransformStream({
     transform(chunk, controller) {
@@ -110,10 +130,7 @@ export default {
       const key = `${folder}/${filename}`;
       const maxBytes = Math.max(1, Number(env.MAX_BYTES) || 104857600);
 
-      const remote = await fetch(source.toString(), {
-        redirect: "follow",
-        headers: { "user-agent": "remote-download-2-cloudflare/0.1" }
-      });
+      const remote = await fetchRemoteSafely(source, allowedHosts);
 
       if (!remote.ok || !remote.body) {
         return json({ ok: false, error: `Remote fetch failed: ${remote.status}` }, 502);
