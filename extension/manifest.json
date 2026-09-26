@@ -1,11 +1,19 @@
 {
   "manifest_version": 3,
-  "name": "Remote Download 2 Cloudflare",
-  "version": "0.1.0",
-  "description": "Send a right-clicked URL to a local bridge that asks Cloudflare to fetch it directly into R2.",
-  "permissions": ["contextMenus", "notifications"],
-  "host_permissions": ["http://127.0.0.1:8765/*"],
+  "name": "Remote Asset Ingest",
+  "version": "0.2.0",
+  "description": "Send remote assets directly to Cloudflare R2 or GitHub without downloading them through your computer.",
+  "permissions": ["contextMenus", "notifications", "storage"],
+  "host_permissions": [
+    "https://api.github.com/*",
+    "https://*/*"
+  ],
   "background": {
     "service_worker": "background.js"
-  }
+  },
+  "action": {
+    "default_title": "Remote Asset Ingest",
+    "default_popup": "popup.html"
+  },
+  "options_page": "options.html"
 }
