@@ -330,8 +330,19 @@ async function ensureWorkersSubdomain(accountId) {
 }
 async function provisionCloudflareProfile({ accountId, accountName, bucketName, profileName, folders }) {
   if (!accountId || !bucketName) throw new Error("Choose an account and bucket");
-  const secret = randomString(36);
-  const scriptName = `redown-${safeSlug(bucketName, 38)}-${accountId.slice(0, 6)}`;
+
+  const profiles = await getProfiles();
+  const existingIndex = profiles.findIndex(p =>
+    p.type === "cloudflare-r2" && p.accountId === accountId && p.bucketName === bucketName
+  );
+  const existing = existingIndex >= 0 ? profiles[existingIndex] : null;
+
+  const secret = existing?.token || randomString(36);
+  const scriptName = existing?.scriptName || `redown-${safeSlug(bucketName, 38)}-${accountId.slice(0, 6)}`;
+
+  // A workers.dev account subdomain must exist before a script can be enabled there.
+  const subdomain = await ensureWorkersSubdomain(accountId);
+
   const metadata = {
     main_module: "worker.js",
     compatibility_date: "2026-09-26",
@@ -350,36 +361,62 @@ async function provisionCloudflareProfile({ accountId, accountName, bucketName, 
   });
   if (!upload.ok) {
     const text = await upload.text();
-    throw new Error(`Could not provision REDOWN Worker (${upload.status}): ${text.slice(0, 220)}`);
+    throw new Error(`Could not provision REDOWN Worker (${upload.status}): ${text.slice(0, 300)}`);
   }
 
-  await cfJson(`/accounts/${accountId}/workers/scripts/${scriptName}/subdomain`, {
+  const enable = await cfFetch(`/accounts/${accountId}/workers/scripts/${scriptName}/subdomain`, {
     method: "POST",
     body: JSON.stringify({ enabled: true, previews_enabled: false })
   });
+  if (!enable.ok) {
+    const text = await enable.text();
+    throw new Error(`Worker uploaded, but workers.dev could not be enabled (${enable.status}): ${text.slice(0, 300)}`);
+  }
 
-  const subdomain = await ensureWorkersSubdomain(accountId);
   const workerUrl = `https://${scriptName}.${subdomain}.workers.dev`;
-  const profiles = await getProfiles();
-  const existingIndex = profiles.findIndex(p =>
-    p.type === "cloudflare-r2" && p.accountId === accountId && p.bucketName === bucketName
-  );
+
+  // Do not save a broken preset. Confirm Cloudflare can actually execute the Worker.
+  let health = null;
+  let healthError = null;
+  for (let attempt = 0; attempt < 6; attempt++) {
+    try {
+      const response = await fetch(workerUrl, { method: "GET", cache: "no-store" });
+      if (response.ok) {
+        health = await response.json().catch(() => ({ ok: true }));
+        if (health?.ok) break;
+      }
+      healthError = `HTTP ${response.status}`;
+    } catch (error) {
+      healthError = error?.message || String(error);
+    }
+    await new Promise(resolve => setTimeout(resolve, 500 * (attempt + 1)));
+  }
+  if (!health?.ok) {
+    throw new Error(`REDOWN Worker did not become reachable at ${workerUrl}${healthError ? ` (${healthError})` : ""}`);
+  }
+
   const profile = {
-    id: existingIndex >= 0 ? profiles[existingIndex].id : crypto.randomUUID(),
-    name: profileName || bucketName,
+    ...(existing || {}),
+    id: existing?.id || crypto.randomUUID(),
+    name: existing?.name || profileName || bucketName,
     type: "cloudflare-r2",
-    accountId, accountName, bucketName, scriptName, workerUrl,
+    accountId,
+    accountName,
+    bucketName,
+    scriptName,
+    workerUrl,
     token: secret,
     folders: {
-      "2d": folders?.["2d"] || "2d",
-      "3d": folders?.["3d"] || "3d",
-      "files": folders?.files || "files"
+      "2d": existing?.folders?.["2d"] || folders?.["2d"] || "2d",
+      "3d": existing?.folders?.["3d"] || folders?.["3d"] || "3d",
+      "files": existing?.folders?.files || folders?.files || "files"
     },
-    defaultCategory: "files",
-    menuTree: [],
-    showInContextMenu: true,
-    menuOrder: profiles.length
+    defaultCategory: existing?.defaultCategory || "files",
+    menuTree: Array.isArray(existing?.menuTree) ? existing.menuTree : [],
+    showInContextMenu: existing?.showInContextMenu !== false,
+    menuOrder: existing?.menuOrder ?? profiles.length
   };
+
   if (existingIndex >= 0) profiles[existingIndex] = profile;
   else profiles.push(profile);
   await setProfiles(profiles);
