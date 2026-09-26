@@ -28,7 +28,7 @@ remote source -> Cloudflare Worker -> R2
 The user's computer sends control metadata only.
 
 OAuth publisher:
-- Client ID: `D9db0f71eb24cd2eed86b50a650a045e`
+- Client ID: `d9db0f71eb24cd2eed86b50a650a045e`
 - Verified publisher domain: `webrev.online`
 - Browser callback: `https://mkadkgpekmkknfbniacdlmgikihjjepf.chromiumapp.org/cloudflare`
 
