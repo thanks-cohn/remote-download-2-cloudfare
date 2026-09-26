@@ -4,7 +4,7 @@ const CF_AUTH_URL = "https://dash.cloudflare.com/oauth2/auth";
 const CF_TOKEN_URL = "https://dash.cloudflare.com/oauth2/token";
 const CF_API = "https://api.cloudflare.com/client/v4";
 
-const GITHUB_WORKFLOW = \`name: REDOWN Remote Ingest
+const GITHUB_WORKFLOW = `name: REDOWN Remote Ingest
 
 on:
   workflow_dispatch:
@@ -48,9 +48,9 @@ jobs:
           if git diff --cached --quiet; then exit 0; fi
           git commit -m "asset: ingest $(basename "\${{ inputs.destination_path }}")"
           git push
-\`;
+`;
 
-const WORKER_SOURCE = \`
+const WORKER_SOURCE = `
 function privateHost(hostname) {
   const h = hostname.toLowerCase();
   if (h === "localhost" || h.endsWith(".localhost") || h === "::1" || h === "0.0.0.0") return true;
@@ -131,7 +131,7 @@ export default {
     }
   }
 };
-\`;
+`;
 
 function bytesToBase64Url(bytes) {
   let raw = "";
@@ -181,11 +181,11 @@ async function cfFetch(path, options = {}) {
   const { cloudflareAuth } = await chrome.storage.local.get("cloudflareAuth");
   if (!cloudflareAuth?.accessToken) throw new Error("Connect Cloudflare first");
   const headers = new Headers(options.headers || {});
-  headers.set("authorization", \`Bearer \${cloudflareAuth.accessToken}\`);
+  headers.set("authorization", `Bearer ${cloudflareAuth.accessToken}`);
   if (options.body && !(options.body instanceof FormData) && !headers.has("content-type")) {
     headers.set("content-type", "application/json");
   }
-  const res = await fetch(\`\${CF_API}\${path}\`, { ...options, headers });
+  const res = await fetch(`${CF_API}${path}`, { ...options, headers });
   if (res.status === 401) throw new Error("Cloudflare authorization expired. Reconnect Cloudflare.");
   return res;
 }
@@ -193,7 +193,7 @@ async function cfJson(path, options = {}) {
   const res = await cfFetch(path, options);
   const body = await res.json().catch(() => ({}));
   if (!res.ok || body.success === false) {
-    throw new Error(body?.errors?.[0]?.message || body?.error || \`Cloudflare request failed (\${res.status})\`);
+    throw new Error(body?.errors?.[0]?.message || body?.error || `Cloudflare request failed (${res.status})`);
   }
   return body.result ?? body;
 }
@@ -240,7 +240,7 @@ async function connectCloudflare() {
   }
 
   const userRes = await fetch("https://dash.cloudflare.com/oauth2/userinfo", {
-    headers: { authorization: \`Bearer \${token.access_token}\` }
+    headers: { authorization: `Bearer ${token.access_token}` }
   });
   const user = userRes.ok ? await userRes.json().catch(() => null) : null;
 
@@ -273,7 +273,7 @@ async function listCloudflareAccounts() {
   return Array.isArray(body) ? body.map(x => ({ id: x.id, name: x.name })) : [];
 }
 async function listBuckets(accountId) {
-  const result = await cfJson(\`/accounts/\${accountId}/r2/buckets\`);
+  const result = await cfJson(`/accounts/${accountId}/r2/buckets`);
   const buckets = result?.buckets || [];
   return buckets.map(x => ({ name: x.name, location: x.location, jurisdiction: x.jurisdiction }));
 }
@@ -284,22 +284,22 @@ async function createBucket(accountId, name, locationHint = "") {
   }
   const payload = { name: clean };
   if (locationHint) payload.locationHint = locationHint;
-  return cfJson(\`/accounts/\${accountId}/r2/buckets\`, {
+  return cfJson(`/accounts/${accountId}/r2/buckets`, {
     method: "POST", body: JSON.stringify(payload)
   });
 }
 async function ensureWorkersSubdomain(accountId) {
-  let res = await cfFetch(\`/accounts/\${accountId}/workers/subdomain\`);
+  let res = await cfFetch(`/accounts/${accountId}/workers/subdomain`);
   if (res.ok) {
     const body = await res.json();
     if (body?.result?.subdomain) return body.result.subdomain;
   }
   const candidates = [
-    \`redown-\${accountId.slice(0, 8)}\`,
-    \`redown-\${accountId.slice(0, 8)}-\${Math.random().toString(36).slice(2, 7)}\`
+    `redown-${accountId.slice(0, 8)}`,
+    `redown-${accountId.slice(0, 8)}-${Math.random().toString(36).slice(2, 7)}`
   ];
   for (const subdomain of candidates) {
-    res = await cfFetch(\`/accounts/\${accountId}/workers/subdomain\`, {
+    res = await cfFetch(`/accounts/${accountId}/workers/subdomain`, {
       method: "PUT",
       body: JSON.stringify({ subdomain })
     });
@@ -310,7 +310,7 @@ async function ensureWorkersSubdomain(accountId) {
 async function provisionCloudflareProfile({ accountId, accountName, bucketName, profileName, folders }) {
   if (!accountId || !bucketName) throw new Error("Choose an account and bucket");
   const secret = randomString(36);
-  const scriptName = \`redown-\${safeSlug(bucketName, 38)}-\${accountId.slice(0, 6)}\`;
+  const scriptName = `redown-${safeSlug(bucketName, 38)}-${accountId.slice(0, 6)}`;
   const metadata = {
     main_module: "worker.js",
     compatibility_date: "2026-09-26",
@@ -324,21 +324,21 @@ async function provisionCloudflareProfile({ accountId, accountName, bucketName, 
   form.append("metadata", new Blob([JSON.stringify(metadata)], { type: "application/json" }));
   form.append("worker.js", new Blob([WORKER_SOURCE], { type: "application/javascript+module" }), "worker.js");
 
-  const upload = await cfFetch(\`/accounts/\${accountId}/workers/scripts/\${scriptName}\`, {
+  const upload = await cfFetch(`/accounts/${accountId}/workers/scripts/${scriptName}`, {
     method: "PUT", body: form
   });
   if (!upload.ok) {
     const text = await upload.text();
-    throw new Error(\`Could not provision REDOWN Worker (\${upload.status}): \${text.slice(0, 220)}\`);
+    throw new Error(`Could not provision REDOWN Worker (${upload.status}): ${text.slice(0, 220)}`);
   }
 
-  await cfJson(\`/accounts/\${accountId}/workers/scripts/\${scriptName}/subdomain\`, {
+  await cfJson(`/accounts/${accountId}/workers/scripts/${scriptName}/subdomain`, {
     method: "POST",
     body: JSON.stringify({ enabled: true, previews_enabled: false })
   });
 
   const subdomain = await ensureWorkersSubdomain(accountId);
-  const workerUrl = \`https://\${scriptName}.\${subdomain}.workers.dev\`;
+  const workerUrl = `https://${scriptName}.${subdomain}.workers.dev`;
   const profiles = await getProfiles();
   const existingIndex = profiles.findIndex(p =>
     p.type === "cloudflare-r2" && p.accountId === accountId && p.bucketName === bucketName
@@ -368,7 +368,7 @@ async function listObjects(accountId, bucketName, prefix = "") {
   const params = new URLSearchParams();
   if (prefix) params.set("prefix", prefix);
   const result = await cfJson(
-    \`/accounts/\${accountId}/r2/buckets/\${encodeURIComponent(bucketName)}/objects?\${params}\`
+    `/accounts/${accountId}/r2/buckets/${encodeURIComponent(bucketName)}/objects?${params}`
   );
   return result?.objects || result || [];
 }
@@ -377,20 +377,20 @@ async function ensureGitHubWorkflow(profile) {
   const workflow = profile.workflowFile || "redown-ingest.yml";
   const branch = profile.branch || "main";
   const headers = {
-    authorization: \`Bearer \${profile.token || ""}\`,
+    authorization: `Bearer ${profile.token || ""}`,
     accept: "application/vnd.github+json",
     "x-github-api-version": "2022-11-28"
   };
-  const path = \`.github/workflows/\${workflow}\`;
+  const path = `.github/workflows/${workflow}`;
   const apiPath = encodeURIComponent(path).replace(/%2F/g, "/");
   const lookup = await fetch(
-    \`https://api.github.com/repos/\${repo}/contents/\${apiPath}?ref=\${encodeURIComponent(branch)}\`,
+    `https://api.github.com/repos/${repo}/contents/${apiPath}?ref=${encodeURIComponent(branch)}`,
     { headers }
   );
   if (lookup.ok) return;
-  if (lookup.status !== 404) throw new Error(\`Could not check GitHub workflow (\${lookup.status})\`);
+  if (lookup.status !== 404) throw new Error(`Could not check GitHub workflow (${lookup.status})`);
   const encoded = btoa(unescape(encodeURIComponent(GITHUB_WORKFLOW)));
-  const create = await fetch(\`https://api.github.com/repos/\${repo}/contents/\${apiPath}\`, {
+  const create = await fetch(`https://api.github.com/repos/${repo}/contents/${apiPath}`, {
     method: "PUT",
     headers: { ...headers, "content-type": "application/json" },
     body: JSON.stringify({
@@ -398,14 +398,14 @@ async function ensureGitHubWorkflow(profile) {
       content: encoded, branch
     })
   });
-  if (!create.ok) throw new Error(\`Could not install GitHub ingest workflow (\${create.status})\`);
+  if (!create.ok) throw new Error(`Could not install GitHub ingest workflow (${create.status})`);
 }
 async function ingestCloudflare(profile, sourceUrl, category, filename) {
   const folder = profile.folders?.[category] || category;
   const response = await fetch(profile.workerUrl, {
     method: "POST",
     headers: {
-      authorization: \`Bearer \${profile.token || ""}\`,
+      authorization: `Bearer ${profile.token || ""}`,
       "content-type": "application/json"
     },
     body: JSON.stringify({ sourceUrl, folder, filename })
@@ -413,8 +413,8 @@ async function ingestCloudflare(profile, sourceUrl, category, filename) {
   const text = await response.text();
   let body;
   try { body = JSON.parse(text); } catch { body = { ok: false, error: text }; }
-  if (!response.ok || !body.ok) throw new Error(body.error || \`Cloudflare ingest failed (\${response.status})\`);
-  return \`\${profile.bucketName}/\${body.key}\`;
+  if (!response.ok || !body.ok) throw new Error(body.error || `Cloudflare ingest failed (${response.status})`);
+  return `${profile.bucketName}/${body.key}`;
 }
 async function ingestGitHub(profile, sourceUrl, category, filename) {
   const repo = String(profile.repository || "").trim();
@@ -424,11 +424,11 @@ async function ingestGitHub(profile, sourceUrl, category, filename) {
   const destinationPath = joinPath(profile.paths?.[category] || profile.defaultPath || "", filename);
   await ensureGitHubWorkflow(profile);
   const response = await fetch(
-    \`https://api.github.com/repos/\${repo}/actions/workflows/\${encodeURIComponent(workflow)}/dispatches\`,
+    `https://api.github.com/repos/${repo}/actions/workflows/${encodeURIComponent(workflow)}/dispatches`,
     {
       method: "POST",
       headers: {
-        authorization: \`Bearer \${profile.token || ""}\`,
+        authorization: `Bearer ${profile.token || ""}`,
         accept: "application/vnd.github+json",
         "x-github-api-version": "2022-11-28",
         "content-type": "application/json"
@@ -436,8 +436,8 @@ async function ingestGitHub(profile, sourceUrl, category, filename) {
       body: JSON.stringify({ ref, inputs: { source_url: sourceUrl, destination_path: destinationPath } })
     }
   );
-  if (!response.ok) throw new Error(\`GitHub dispatch failed (\${response.status})\`);
-  return \`\${repo} → \${destinationPath}\`;
+  if (!response.ok) throw new Error(`GitHub dispatch failed (${response.status})`);
+  return `${repo} → ${destinationPath}`;
 }
 async function ingest(profile, sourceUrl, category, filename) {
   const finalFilename = filename || basenameFromUrl(sourceUrl);
