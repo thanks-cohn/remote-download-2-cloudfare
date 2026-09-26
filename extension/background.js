@@ -1,5 +1,5 @@
 const ROOT_MENU_ID = "redown";
-const CF_CLIENT_ID = "D9db0f71eb24cd2eed86b50a650a045e";
+const CF_CLIENT_ID = "d9db0f71eb24cd2eed86b50a650a045e";
 const CF_AUTH_URL = "https://dash.cloudflare.com/oauth2/auth";
 const CF_TOKEN_URL = "https://dash.cloudflare.com/oauth2/token";
 const CF_API = "https://api.cloudflare.com/client/v4";
