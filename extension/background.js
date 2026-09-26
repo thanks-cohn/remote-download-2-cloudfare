@@ -95,6 +95,23 @@ export default {
     }
     try {
       const body = await request.json();
+
+      if (body.action === "ensurePrefixes") {
+        const requested = Array.isArray(body.prefixes) ? body.prefixes : [];
+        const created = [];
+        for (const value of requested) {
+          const prefix = cleanPrefix(value);
+          if (!prefix) continue;
+          const key = \`\${prefix}/.redown\`;
+          await env.STORAGE.put(key, "", {
+            httpMetadata: { contentType: "text/plain; charset=utf-8", cacheControl: "no-store" },
+            customMetadata: { redownMarker: "true", createdAt: new Date().toISOString() }
+          });
+          created.push(key);
+        }
+        return Response.json({ ok: true, created });
+      }
+
       const sourceUrl = String(body.sourceUrl || "");
       const source = new URL(sourceUrl);
       const filename = cleanName(body.filename || source.pathname);
@@ -395,6 +412,33 @@ async function provisionCloudflareProfile({ accountId, accountName, bucketName, 
     throw new Error(`REDOWN Worker did not become reachable at ${workerUrl}${healthError ? ` (${healthError})` : ""}`);
   }
 
+  const desiredFolders = {
+    "2d": existing?.folders?.["2d"] || folders?.["2d"] || "2d",
+    "3d": existing?.folders?.["3d"] || folders?.["3d"] || "3d",
+    "files": existing?.folders?.files || folders?.files || "files"
+  };
+
+  // Verify the R2 binding with an actual write and materialize visible prefix markers
+  // so brand-new empty buckets immediately show their configured REDOWN locations.
+  const prefixCheck = await fetch(workerUrl, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${secret}`,
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({
+      action: "ensurePrefixes",
+      prefixes: Object.values(desiredFolders)
+    })
+  });
+  const prefixBody = await prefixCheck.json().catch(() => ({}));
+  if (!prefixCheck.ok || !prefixBody?.ok) {
+    throw new Error(
+      prefixBody?.error ||
+      `REDOWN Worker is reachable but cannot write to R2 (${prefixCheck.status})`
+    );
+  }
+
   const profile = {
     ...(existing || {}),
     id: existing?.id || crypto.randomUUID(),
@@ -406,11 +450,7 @@ async function provisionCloudflareProfile({ accountId, accountName, bucketName, 
     scriptName,
     workerUrl,
     token: secret,
-    folders: {
-      "2d": existing?.folders?.["2d"] || folders?.["2d"] || "2d",
-      "3d": existing?.folders?.["3d"] || folders?.["3d"] || "3d",
-      "files": existing?.folders?.files || folders?.files || "files"
-    },
+    folders: desiredFolders,
     defaultCategory: existing?.defaultCategory || "files",
     menuTree: Array.isArray(existing?.menuTree) ? existing.menuTree : [],
     showInContextMenu: existing?.showInContextMenu !== false,
