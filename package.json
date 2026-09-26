@@ -1,5 +1,5 @@
 {
-  "name": "remote-download-2-cloudfare",
+  "name": "remote-asset-ingest",
   "private": true,
   "version": "0.1.0",
   "type": "module",
