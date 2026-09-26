@@ -197,7 +197,12 @@ async function cfJson(path, options = {}) {
   }
   return body.result ?? body;
 }
+let cloudflareAuthInFlight = null;
+
 async function connectCloudflare() {
+  if (cloudflareAuthInFlight) return cloudflareAuthInFlight;
+
+  cloudflareAuthInFlight = (async () => {
   const redirectUri = chrome.identity.getRedirectURL("cloudflare");
   const verifier = randomString(48);
   const challenge = await sha256Base64Url(verifier);
@@ -254,6 +259,13 @@ async function connectCloudflare() {
   });
 
   return { user, accounts: await listCloudflareAccounts() };
+  })();
+
+  try {
+    return await cloudflareAuthInFlight;
+  } finally {
+    cloudflareAuthInFlight = null;
+  }
 }
 async function disconnectCloudflare() {
   const { cloudflareAuth } = await chrome.storage.local.get("cloudflareAuth");

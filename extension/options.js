@@ -329,11 +329,23 @@ async function browse(){
 }
 
 $("connect-cloudflare").addEventListener("click",async()=>{
+  const button=$("connect-cloudflare");
+  if(button.disabled)return;
+  button.disabled=true;
+  const original=button.textContent;
+  button.textContent="Connecting…";
   setStatus("hero-status","Opening Cloudflare…");
-  const result=await send({type:"cfConnect"});
-  if(!result?.ok){setStatus("hero-status",result?.error||"Cloudflare connection failed","bad");return;}
-  setStatus("hero-status","Cloudflare connected.","ok");
-  await refreshCloudflare();
+  try{
+    const result=await send({type:"cfConnect"});
+    if(!result?.ok)throw new Error(result?.error||"Cloudflare connection failed");
+    setStatus("hero-status","Cloudflare connected.","ok");
+    await refreshCloudflare();
+  }catch(error){
+    setStatus("hero-status",error?.message||String(error),"bad");
+  }finally{
+    button.disabled=false;
+    button.textContent=original;
+  }
 });
 $("disconnect-cloudflare").addEventListener("click",async()=>{await send({type:"cfDisconnect"});setStatus("hero-status","Cloudflare disconnected.");await refreshCloudflare();});
 $("cf-account").addEventListener("change",async e=>{currentAccountId=e.target.value;await refreshBuckets();});
