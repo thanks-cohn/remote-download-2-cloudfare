@@ -34,6 +34,12 @@ OAuth publisher:
 
 No OAuth client secret is embedded in the extension. REDOWN uses Authorization Code + PKCE.
 
+OAuth request scopes:
+- `workers-r2.read`
+- `workers-r2.write`
+- `workers-scripts.read`
+- `workers-scripts.write`
+
 ## Right-click presets
 
 Every saved destination controls its own right-click behavior.
