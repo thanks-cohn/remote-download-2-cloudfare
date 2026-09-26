@@ -1,4 +1,4 @@
-name = "remote-download-2-cloudflare"
+name = "remote-asset-ingest"
 main = "worker/src/index.js"
 compatibility_date = "2026-09-26"
 
