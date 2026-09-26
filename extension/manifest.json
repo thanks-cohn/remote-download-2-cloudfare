@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "Remote Download 2 Cloudflare",
+  "version": "0.1.0",
+  "description": "Send a right-clicked URL to a local bridge that asks Cloudflare to fetch it directly into R2.",
+  "permissions": ["contextMenus", "notifications"],
+  "host_permissions": ["http://127.0.0.1:8765/*"],
+  "background": {
+    "service_worker": "background.js"
+  }
+}
