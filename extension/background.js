@@ -213,6 +213,15 @@ async function connectCloudflare() {
   auth.searchParams.set("redirect_uri", redirectUri);
   auth.searchParams.set("code_challenge", challenge);
   auth.searchParams.set("code_challenge_method", "S256");
+  auth.searchParams.set(
+    "scope",
+    [
+      "workers-r2.read",
+      "workers-r2.write",
+      "workers-scripts.read",
+      "workers-scripts.write"
+    ].join(" ")
+  );
   auth.searchParams.set("state", state);
 
   const callback = await chrome.identity.launchWebAuthFlow({
