@@ -87,7 +87,12 @@ async function checkedFetch(raw, hops = 5) {
 }
 export default {
   async fetch(request, env) {
-    if (request.method === "GET") return Response.json({ ok: true, service: "REDOWN" });
+    if (request.method === "GET") return Response.json({
+      ok: true,
+      service: "REDOWN",
+      secretConfigured: Boolean(env.REDOWN_SECRET),
+      storageBound: Boolean(env.STORAGE)
+    });
     if (request.method !== "POST") return Response.json({ ok: false, error: "Method not allowed" }, { status: 405 });
     const auth = request.headers.get("authorization") || "";
     if (!env.REDOWN_SECRET || auth !== \`Bearer \${env.REDOWN_SECRET}\`) {
@@ -379,6 +384,24 @@ async function provisionCloudflareProfile({ accountId, accountName, bucketName, 
   if (!upload.ok) {
     const text = await upload.text();
     throw new Error(`Could not provision REDOWN Worker (${upload.status}): ${text.slice(0, 300)}`);
+  }
+
+  // Explicitly synchronize the ingest secret after every deploy/repair.
+  // This avoids stale or missing secret bindings on previously provisioned Workers.
+  const secretRes = await cfFetch(
+    `/accounts/${accountId}/workers/scripts/${scriptName}/secrets`,
+    {
+      method: "PUT",
+      body: JSON.stringify({
+        name: "REDOWN_SECRET",
+        text: secret,
+        type: "secret_text"
+      })
+    }
+  );
+  if (!secretRes.ok) {
+    const text = await secretRes.text();
+    throw new Error(`Worker deployed, but REDOWN could not synchronize its secret (${secretRes.status}): ${text.slice(0, 300)}`);
   }
 
   const enable = await cfFetch(`/accounts/${accountId}/workers/scripts/${scriptName}/subdomain`, {
