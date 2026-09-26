@@ -51,6 +51,7 @@ jobs:
 `;
 
 const WORKER_SOURCE = `
+const REDOWN_SHARED_SECRET = "__REDOWN_SHARED_SECRET__";
 function privateHost(hostname) {
   const h = hostname.toLowerCase();
   if (h === "localhost" || h.endsWith(".localhost") || h === "::1" || h === "0.0.0.0") return true;
@@ -90,7 +91,7 @@ export default {
     if (request.method === "GET") return Response.json({
       ok: true,
       service: "REDOWN",
-      secretConfigured: Boolean(env.REDOWN_SECRET),
+      secretConfigured: Boolean(REDOWN_SHARED_SECRET),
       storageBound: Boolean(env.STORAGE)
     });
     if (request.method !== "POST") return Response.json({ ok: false, error: "Method not allowed" }, { status: 405 });
@@ -381,13 +382,13 @@ async function provisionCloudflareProfile({ accountId, accountName, bucketName, 
     compatibility_date: "2026-09-26",
     bindings: [
       { type: "r2_bucket", name: "STORAGE", bucket_name: bucketName },
-      { type: "secret_text", name: "REDOWN_SECRET", text: secret },
       { type: "plain_text", name: "MAX_BYTES", text: "314572800" }
     ]
   };
   const form = new FormData();
   form.append("metadata", new Blob([JSON.stringify(metadata)], { type: "application/json" }));
-  form.append("worker.js", new Blob([WORKER_SOURCE], { type: "application/javascript+module" }), "worker.js");
+  const deployedWorkerSource = WORKER_SOURCE.replace("__REDOWN_SHARED_SECRET__", secret);
+  form.append("worker.js", new Blob([deployedWorkerSource], { type: "application/javascript+module" }), "worker.js");
 
   const upload = await cfFetch(`/accounts/${accountId}/workers/scripts/${scriptName}`, {
     method: "PUT", body: form
@@ -395,24 +396,6 @@ async function provisionCloudflareProfile({ accountId, accountName, bucketName, 
   if (!upload.ok) {
     const text = await upload.text();
     throw new Error(`Could not provision REDOWN Worker (${upload.status}): ${text.slice(0, 300)}`);
-  }
-
-  // Explicitly synchronize the ingest secret after every deploy/repair.
-  // This avoids stale or missing secret bindings on previously provisioned Workers.
-  const secretRes = await cfFetch(
-    `/accounts/${accountId}/workers/scripts/${scriptName}/secrets`,
-    {
-      method: "PUT",
-      body: JSON.stringify({
-        name: "REDOWN_SECRET",
-        text: secret,
-        type: "secret_text"
-      })
-    }
-  );
-  if (!secretRes.ok) {
-    const text = await secretRes.text();
-    throw new Error(`Worker deployed, but REDOWN could not synchronize its secret (${secretRes.status}): ${text.slice(0, 300)}`);
   }
 
   const enable = await cfFetch(`/accounts/${accountId}/workers/scripts/${scriptName}/subdomain`, {
