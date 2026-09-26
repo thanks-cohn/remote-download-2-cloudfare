@@ -132,6 +132,34 @@
 
   <section class="section">
     <div class="section-head">
+      <div>
+        <h2>Browser downloads</h2>
+        <div class="section-note">Turn Chrome's normal downloadable HTTPS files into REDOWN transfers.</div>
+      </div>
+    </div>
+    <div class="card">
+      <label class="toggle" style="margin-bottom:14px">
+        <input id="download-intercept-enabled" type="checkbox">
+        <span>Intercept browser downloads</span>
+      </label>
+      <div class="grid two">
+        <div>
+          <label for="download-intercept-profile">Default REDOWN destination</label>
+          <select id="download-intercept-profile"></select>
+        </div>
+        <div>
+          <label>Behavior</label>
+          <div class="meta" style="padding:9px 0">
+            Chrome starts the download, REDOWN cancels the local copy, then sends the original HTTPS URL to this destination. Images route to 2D, GLB/GLTF to 3D, and videos/other files use the destination's default path.
+          </div>
+        </div>
+      </div>
+      <div id="download-intercept-status" class="status"></div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="section-head">
       <div><h2>Recent transfers</h2><div class="section-note">REDOWN keeps the last 50 attempts so failures are visible instead of silent.</div></div>
       <button id="refresh-history" class="ghost">Refresh</button>
     </div>
