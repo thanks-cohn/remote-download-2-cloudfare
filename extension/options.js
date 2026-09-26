@@ -9,6 +9,164 @@ function setStatus(id,msg,kind=""){const el=$(id);el.textContent=msg||"";el.clas
 async function send(message){return chrome.runtime.sendMessage(message);}
 async function saveProfiles(){await chrome.storage.local.set({profiles});}
 function displayName(p){return p.name||p.bucketName||p.repository||"Destination";}
+let saveTimer=null;
+function scheduleSave(){
+  clearTimeout(saveTimer);
+  saveTimer=setTimeout(()=>saveProfiles(),180);
+}
+function makeNode(label="New section"){
+  return {id:uid(),label,category:"files",prefix:"",path:"",children:[]};
+}
+function findNode(nodes,id){
+  for(const node of nodes||[]){
+    if(node.id===id)return node;
+    const found=findNode(node.children,id);
+    if(found)return found;
+  }
+  return null;
+}
+function removeNode(nodes,id){
+  const index=(nodes||[]).findIndex(n=>n.id===id);
+  if(index>=0){nodes.splice(index,1);return true;}
+  for(const node of nodes||[]) if(removeNode(node.children,id)) return true;
+  return false;
+}
+function renderTree(profile){
+  const wrap=document.createElement("div");
+  wrap.className="tree-editor";
+
+  const heading=document.createElement("div");
+  heading.className="tree-heading";
+  const copy=document.createElement("div");
+  const strong=document.createElement("strong");
+  strong.textContent="Right-click behavior";
+  const small=document.createElement("div");
+  small.className="meta";
+  small.textContent=(profile.menuTree?.length)
+    ?"Nested menu: each leaf sends to its own saved location."
+    :"Quick send: clicking this preset immediately uses its default location.";
+  copy.append(strong,small);
+
+  const controls=document.createElement("div");
+  controls.className="row-actions";
+  const quick=document.createElement("button");
+  quick.className=profile.menuTree?.length?"ghost":"secondary";
+  quick.textContent="Quick send";
+  quick.addEventListener("click",()=>{
+    profile.menuTree=[];
+    scheduleSave();
+    renderProfiles();
+  });
+  const nested=document.createElement("button");
+  nested.className=profile.menuTree?.length?"secondary":"ghost";
+  nested.textContent="Nested menu";
+  nested.addEventListener("click",()=>{
+    if(!profile.menuTree?.length){
+      profile.menuTree=[
+        {id:uid(),label:"3D",category:"3d",prefix:"3d",path:"assets/3d",children:[]},
+        {id:uid(),label:"2D",category:"2d",prefix:"2d",path:"assets/2d",children:[]},
+        {id:uid(),label:"Files",category:"files",prefix:"files",path:"assets/files",children:[]}
+      ];
+    }
+    scheduleSave();
+    renderProfiles();
+  });
+  controls.append(quick,nested);
+  heading.append(copy,controls);
+  wrap.append(heading);
+
+  if(!profile.menuTree?.length) return wrap;
+
+  const note=document.createElement("div");
+  note.className="tree-note";
+  note.textContent="Add children to any item to create another pop-out level. There is no fixed depth.";
+  wrap.append(note);
+
+  const treeRoot=document.createElement("div");
+  treeRoot.className="tree-root";
+  for(const node of profile.menuTree) treeRoot.append(renderTreeNode(profile,node,0));
+  wrap.append(treeRoot);
+
+  const addRoot=document.createElement("button");
+  addRoot.className="ghost";
+  addRoot.textContent="+ Add top-level item";
+  addRoot.addEventListener("click",()=>{
+    profile.menuTree.push(makeNode("New destination"));
+    scheduleSave();
+    renderProfiles();
+  });
+  wrap.append(addRoot);
+  return wrap;
+}
+function renderTreeNode(profile,node,depth){
+  node.children??=[];
+  const item=document.createElement("div");
+  item.className="tree-node";
+  item.style.setProperty("--depth",String(depth));
+
+  const row=document.createElement("div");
+  row.className="tree-row";
+
+  const branch=document.createElement("div");
+  branch.className="tree-branch";
+  branch.textContent=node.children.length?"▾":"•";
+
+  const labelInput=document.createElement("input");
+  labelInput.className="tree-label";
+  labelInput.value=node.label||"";
+  labelInput.placeholder="Menu label";
+  labelInput.addEventListener("input",()=>{node.label=labelInput.value;scheduleSave();});
+
+  const kind=document.createElement("select");
+  [["files","Files"],["3d","3D"],["2d","2D"]].forEach(([v,t])=>{
+    const o=document.createElement("option");o.value=v;o.textContent=t;o.selected=(node.category||"files")===v;kind.append(o);
+  });
+  kind.title="Target category";
+  kind.addEventListener("change",()=>{node.category=kind.value;scheduleSave();});
+
+  const target=document.createElement("input");
+  target.className="tree-target";
+  target.value=profile.type==="cloudflare-r2"?(node.prefix??""):(node.path??"");
+  target.placeholder=profile.type==="cloudflare-r2"?"R2 prefix, e.g. 3d/heroes":"GitHub path, e.g. assets/3d/heroes";
+  target.disabled=node.children.length>0;
+  target.title=node.children.length?"Parent menu items do not download; their leaf children do.":"Download destination";
+  target.addEventListener("input",()=>{
+    if(profile.type==="cloudflare-r2")node.prefix=target.value;
+    else node.path=target.value;
+    scheduleSave();
+  });
+
+  const add=document.createElement("button");
+  add.className="mini";
+  add.textContent="+ Child";
+  add.title="Add another pop-out level";
+  add.addEventListener("click",()=>{
+    node.children.push(makeNode("New subsection"));
+    scheduleSave();
+    renderProfiles();
+  });
+
+  const remove=document.createElement("button");
+  remove.className="mini danger";
+  remove.textContent="×";
+  remove.title="Remove this menu item";
+  remove.addEventListener("click",()=>{
+    removeNode(profile.menuTree,node.id);
+    scheduleSave();
+    renderProfiles();
+  });
+
+  row.append(branch,labelInput,kind,target,add,remove);
+  item.append(row);
+
+  if(node.children.length){
+    const children=document.createElement("div");
+    children.className="tree-children";
+    for(const child of node.children)children.append(renderTreeNode(profile,child,depth+1));
+    item.append(children);
+  }
+  return item;
+}
 
 function renderProfiles(){
   const root=$("profiles");
@@ -61,7 +219,7 @@ function renderProfiles(){
     const actions=document.createElement("div");actions.className="row-actions";
     const toggle=document.createElement("label");toggle.className="toggle";
     const check=document.createElement("input");check.type="checkbox";check.checked=p.showInContextMenu!==false;
-    check.addEventListener("change",()=>p.showInContextMenu=check.checked);
+    check.addEventListener("change",()=>{p.showInContextMenu=check.checked;scheduleSave();});
     toggle.append(check,document.createTextNode("Show in right-click menu"));
     actions.append(toggle);
 
@@ -78,18 +236,18 @@ function renderProfiles(){
     remove.addEventListener("click",()=>{profiles=profiles.filter(x=>x.id!==p.id);renderProfiles();saveProfiles();});
     actions.append(up,down,remove);
 
-    card.append(top,grid,actions);
+    card.append(top,grid,actions,renderTree(p));
     root.append(card);
   });
 
-  saveProfiles();
+  scheduleSave();
 }
 
 function field(labelText,value,onInput,type="text",placeholder=""){
   const wrap=document.createElement("div");
   const label=document.createElement("label");label.textContent=labelText;
   const input=document.createElement("input");input.type=type;input.value=value??"";input.placeholder=placeholder;
-  input.addEventListener("input",()=>onInput(input.value));
+  input.addEventListener("input",()=>{onInput(input.value);scheduleSave();});
   wrap.append(label,input);return wrap;
 }
 function selectField(labelText,items,value,onInput){
@@ -97,7 +255,7 @@ function selectField(labelText,items,value,onInput){
   const label=document.createElement("label");label.textContent=labelText;
   const select=document.createElement("select");
   items.forEach(([v,t])=>{const o=document.createElement("option");o.value=v;o.textContent=t;o.selected=v===value;select.append(o);});
-  select.addEventListener("change",()=>onInput(select.value));
+  select.addEventListener("change",()=>{onInput(select.value);scheduleSave();});
   wrap.append(label,select);return wrap;
 }
 
@@ -193,7 +351,7 @@ $("add-github").addEventListener("click",()=>{
     id:uid(),name:"GitHub Assets",type:"github",repository:"",branch:"main",
     workflowFile:"redown-ingest.yml",token:"",
     paths:{"2d":"assets/2d","3d":"assets/3d","files":"assets/files"},
-    defaultCategory:"files",showInContextMenu:true,menuOrder:profiles.length
+    defaultCategory:"files",menuTree:[],showInContextMenu:true,menuOrder:profiles.length
   });
   renderProfiles();
   document.querySelector("#profiles .card:last-child")?.scrollIntoView({behavior:"smooth"});
