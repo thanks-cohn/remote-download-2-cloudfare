@@ -355,6 +355,7 @@ async function provisionCloudflareProfile({ accountId, accountName, bucketName, 
       "files": folders?.files || "files"
     },
     defaultCategory: "files",
+    menuTree: [],
     showInContextMenu: true,
     menuOrder: profiles.length
   };
@@ -445,34 +446,73 @@ async function ingest(profile, sourceUrl, category, filename) {
   if (profile.type === "github") return ingestGitHub(profile, sourceUrl, category, finalFilename);
   throw new Error("Unsupported destination type");
 }
+function sanitizeMenuId(value) {
+  return String(value).replace(/[^a-zA-Z0-9_-]/g, "_");
+}
+
+function addPresetTree(profile, nodes, parentId, pathPrefix = []) {
+  for (const node of nodes || []) {
+    const nodeId = sanitizeMenuId(node.id || crypto.randomUUID());
+    const fullPath = [...pathPrefix, nodeId];
+    const menuId = `tree:${profile.id}:${fullPath.join(".")}`;
+    const isLeaf = !Array.isArray(node.children) || node.children.length === 0;
+
+    chrome.contextMenus.create({
+      id: menuId,
+      parentId,
+      title: node.label || node.name || node.prefix || "Destination",
+      contexts: ["link","image","video","audio","page"]
+    });
+
+    if (!isLeaf) {
+      addPresetTree(profile, node.children, menuId, fullPath);
+    }
+  }
+}
+
 async function rebuildMenus() {
   await chrome.contextMenus.removeAll();
   chrome.contextMenus.create({
     id: ROOT_MENU_ID, title: "REDOWN", contexts: ["link","image","video","audio","page"]
   });
+
   const profiles = await getProfiles();
-  if (!profiles.length) {
+  const presets = profiles
+    .filter(p => p.showInContextMenu !== false)
+    .sort((a,b) => (a.menuOrder ?? 999) - (b.menuOrder ?? 999));
+
+  if (!presets.length) {
     chrome.contextMenus.create({
       id:"redown-setup", parentId:ROOT_MENU_ID, title:"Set up a destination…",
       contexts:["link","image","video","audio","page"]
     });
     return;
   }
-  for (const p of profiles) {
-    const parentId = \`profile:\${p.id}\`;
-    chrome.contextMenus.create({
-      id:parentId, parentId:ROOT_MENU_ID, title:p.name || "Destination",
-      contexts:["link","image","video","audio","page"]
-    });
-    for (const category of ["3d","2d","files"]) {
+
+  for (const p of presets) {
+    const title = p.menuLabel || p.name || p.bucketName || p.repository || "Destination";
+
+    if (Array.isArray(p.menuTree) && p.menuTree.length) {
+      const parentId = `preset:${p.id}`;
       chrome.contextMenus.create({
-        id:\`send:\${p.id}:\${category}\`, parentId,
-        title:category === "3d" ? "Send to 3D" : category === "2d" ? "Send to 2D" : "Send to Files",
+        id: parentId, parentId: ROOT_MENU_ID, title,
+        contexts:["link","image","video","audio","page"]
+      });
+      addPresetTree(p, p.menuTree, parentId);
+    } else {
+      chrome.contextMenus.create({
+        id:`quick:${p.id}`, parentId:ROOT_MENU_ID, title,
         contexts:["link","image","video","audio","page"]
       });
     }
   }
+
+  chrome.contextMenus.create({
+    id:"redown-manage", parentId:ROOT_MENU_ID, title:"Manage destinations…",
+    contexts:["link","image","video","audio","page"]
+  });
 }
+
 chrome.runtime.onInstalled.addListener(rebuildMenus);
 chrome.runtime.onStartup.addListener(rebuildMenus);
 chrome.storage.onChanged.addListener((changes, area) => {
@@ -482,20 +522,61 @@ chrome.contextMenus.onClicked.addListener(async info => {
   if (info.menuItemId === "redown-setup" || info.menuItemId === "redown-manage") {
     return chrome.runtime.openOptionsPage();
   }
-  const match = String(info.menuItemId).match(/^quick:([^:]+)$/);
-  if (!match) return;
+
   const profiles = await getProfiles();
-  const profile = profiles.find(p => p.id === match[1]);
-  if (!profile) return notify("REDOWN", "That destination no longer exists.");
   const sourceUrl = selectedUrl(info);
-  const category = profile.defaultCategory || "files";
+
+  const quickMatch = String(info.menuItemId).match(/^quick:([^:]+)$/);
+  if (quickMatch) {
+    const profile = profiles.find(p => p.id === quickMatch[1]);
+    if (!profile) return notify("REDOWN", "That destination no longer exists.");
+    try {
+      const location = await ingest(profile, sourceUrl, profile.defaultCategory || "files");
+      await notify("REDOWN complete", location);
+    } catch (error) {
+      await notify("REDOWN failed", error?.message || String(error));
+    }
+    return;
+  }
+
+  const treeMatch = String(info.menuItemId).match(/^tree:([^:]+):(.+)$/);
+  if (!treeMatch) return;
+
+  const profile = profiles.find(p => p.id === treeMatch[1]);
+  if (!profile) return notify("REDOWN", "That destination no longer exists.");
+
+  const ids = treeMatch[2].split(".");
+  let nodes = profile.menuTree || [];
+  let node = null;
+  for (const id of ids) {
+    node = nodes.find(n => sanitizeMenuId(n.id) === id);
+    if (!node) break;
+    nodes = node.children || [];
+  }
+  if (!node || (Array.isArray(node.children) && node.children.length)) return;
+
+  const category = node.category || profile.defaultCategory || "files";
+  const originalFolders = profile.folders;
+  const originalPaths = profile.paths;
+
   try {
+    if (profile.type === "cloudflare-r2" && node.prefix != null) {
+      profile.folders = { ...(profile.folders || {}), [category]: node.prefix };
+    }
+    if (profile.type === "github" && node.path != null) {
+      profile.paths = { ...(profile.paths || {}), [category]: node.path };
+    }
+
     const location = await ingest(profile, sourceUrl, category);
     await notify("REDOWN complete", location);
   } catch (error) {
     await notify("REDOWN failed", error?.message || String(error));
+  } finally {
+    profile.folders = originalFolders;
+    profile.paths = originalPaths;
   }
 });
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   (async () => {
     try {
