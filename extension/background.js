@@ -1,5 +1,99 @@
 const ROOT_MENU_ID = "remote-asset-ingest";
 
+const GITHUB_WORKFLOW = `name: Remote Asset Ingest
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_url:
+        description: Remote HTTPS URL to fetch
+        required: true
+        type: string
+      destination_path:
+        description: Repository path to write
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate destination
+        shell: bash
+        run: |
+          case "\${{ inputs.destination_path }}" in
+            /*|*..*) echo "Unsafe destination path"; exit 1 ;;
+          esac
+
+      - name: Download remotely on GitHub runner
+        shell: bash
+        run: |
+          mkdir -p "$(dirname "\${{ inputs.destination_path }}")"
+          curl --fail --location --proto '=https' --max-redirs 5 \\
+            --output "\${{ inputs.destination_path }}" \\
+            "\${{ inputs.source_url }}"
+
+      - name: Commit asset
+        shell: bash
+        run: |
+          git config user.name "remote-asset-ingest"
+          git config user.email "remote-asset-ingest@users.noreply.github.com"
+          git add -- "\${{ inputs.destination_path }}"
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+          git commit -m "asset: ingest $(basename "\${{ inputs.destination_path }}")"
+          git push
+`;
+
+async function ensureGitHubWorkflow(profile) {
+  const repo = String(profile.repository || "").trim();
+  const workflow = profile.workflowFile || "remote-ingest.yml";
+  const branch = profile.branch || "main";
+  const headers = {
+    "authorization": `Bearer ${profile.token || ""}`,
+    "accept": "application/vnd.github+json",
+    "x-github-api-version": "2022-11-28"
+  };
+
+  const path = `.github/workflows/${workflow}`;
+  const lookup = await fetch(
+    `https://api.github.com/repos/${repo}/contents/${encodeURIComponent(path).replace(/%2F/g, "/")}?ref=${encodeURIComponent(branch)}`,
+    { headers }
+  );
+
+  if (lookup.ok) return;
+  if (lookup.status !== 404) {
+    throw new Error(`Could not check GitHub workflow (${lookup.status})`);
+  }
+
+  const encoded = btoa(unescape(encodeURIComponent(GITHUB_WORKFLOW)));
+  const create = await fetch(
+    `https://api.github.com/repos/${repo}/contents/${encodeURIComponent(path).replace(/%2F/g, "/")}`,
+    {
+      method: "PUT",
+      headers: { ...headers, "content-type": "application/json" },
+      body: JSON.stringify({
+        message: "chore: add remote asset ingest workflow",
+        content: encoded,
+        branch
+      })
+    }
+  );
+
+  if (!create.ok) {
+    const text = await create.text();
+    throw new Error(`Could not install GitHub ingest workflow (${create.status}): ${text.slice(0, 180)}`);
+  }
+}
+
+
 function selectedUrl(info) {
   return info.linkUrl || info.srcUrl || info.pageUrl || "";
 }
@@ -110,6 +204,8 @@ async function ingestGitHub(profile, sourceUrl, category, filename) {
   const ref = profile.branch || "main";
   const basePath = profile.paths?.[category] || profile.defaultPath || "";
   const destinationPath = joinPath(basePath, filename);
+
+  await ensureGitHubWorkflow(profile);
 
   const response = await fetch(
     `https://api.github.com/repos/${repo}/actions/workflows/${encodeURIComponent(workflow)}/dispatches`,
