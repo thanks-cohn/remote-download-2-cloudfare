@@ -1,21 +1,36 @@
-# Remote Download 2 Cloudflare
+# Remote Asset Ingest
 
-Local-control / remote-transfer utility for sending a remote asset URL straight to a Cloudflare R2 bucket without downloading the asset through the local computer.
+A small Windows-first utility for sending a remote URL directly to a configured
+Cloudflare R2 bucket or GitHub repository without downloading the asset through
+the local computer.
 
-Flow:
+The repository name is not part of the runtime contract. It can be renamed
+without changing the application protocol.
+
+## Transfer paths
+
+Cloudflare:
 
 ```text
-Browser right-click URL
-        ↓
-local helper on 127.0.0.1
-        ↓
-authenticated Cloudflare Worker
-        ↓
-Worker fetch(source URL)
-        ↓
-stream directly into R2
+remote source -> Cloudflare Worker -> R2
 ```
 
-The browser extension contains no Cloudflare credentials. The local helper reads the Worker URL and ingest token from a local `.env`. The Worker validates that token and writes to the configured R2 binding.
+GitHub:
 
-See `SPEC.md` and `SETUP.md`.
+```text
+remote source -> GitHub Actions runner -> target repository
+```
+
+In both cases the local PC sends only control metadata such as the source URL,
+destination, path, and filename.
+
+## User experience
+
+- Configure one or more destination profiles once.
+- Tokens stay local to the Windows user.
+- Chrome/Edge reads the profile list from the local app and builds its
+  right-click menu dynamically.
+- Right-click a link/image/media URL and choose a destination.
+- Or paste a URL directly into the Windows app and press **Send**.
+
+See `SPEC.md`, `SETUP.md`, and `DESTINATIONS.md`.
