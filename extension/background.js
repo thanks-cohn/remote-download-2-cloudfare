@@ -91,12 +91,14 @@ export default {
     if (request.method === "GET") return Response.json({
       ok: true,
       service: "REDOWN",
+      authVersion: 2,
+      authHeader: "x-redown-token",
       secretConfigured: Boolean(REDOWN_SHARED_SECRET),
       storageBound: Boolean(env.STORAGE)
     });
     if (request.method !== "POST") return Response.json({ ok: false, error: "Method not allowed" }, { status: 405 });
-    const auth = request.headers.get("authorization") || "";
-    if (!REDOWN_SHARED_SECRET || auth !== \`Bearer \${REDOWN_SHARED_SECRET}\`) {
+    const auth = request.headers.get("x-redown-token") || "";
+    if (!REDOWN_SHARED_SECRET || auth !== REDOWN_SHARED_SECRET) {
       return Response.json({ ok: false, error: "Unauthorized" }, { status: 401 });
     }
     try {
@@ -462,6 +464,9 @@ async function provisionCloudflareProfile({ accountId, accountName, bucketName, 
   if (!health?.ok) {
     throw new Error(`REDOWN Worker did not become reachable at ${workerUrl}${healthError ? ` (${healthError})` : ""}`);
   }
+  if (health.authVersion !== 2 || health.authHeader !== "x-redown-token") {
+    throw new Error("REDOWN Worker is reachable but an older auth version is still deployed. Click the bucket again to repair it.");
+  }
 
   const desiredFolders = {
     "2d": existing?.folders?.["2d"] || folders?.["2d"] || "2d",
@@ -474,7 +479,7 @@ async function provisionCloudflareProfile({ accountId, accountName, bucketName, 
   const prefixCheck = await fetch(workerUrl, {
     method: "POST",
     headers: {
-      authorization: `Bearer ${secret}`,
+      "x-redown-token": secret,
       "content-type": "application/json"
     },
     body: JSON.stringify({
@@ -554,7 +559,7 @@ async function ingestCloudflare(profile, sourceUrl, category, filename) {
   const response = await fetch(profile.workerUrl, {
     method: "POST",
     headers: {
-      authorization: `Bearer ${profile.token || ""}`,
+      "x-redown-token": profile.token || "",
       "content-type": "application/json"
     },
     body: JSON.stringify({ sourceUrl, folder, filename })
