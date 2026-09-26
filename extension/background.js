@@ -169,7 +169,9 @@ async function sha256Base64Url(value) {
   return bytesToBase64Url(new Uint8Array(digest));
 }
 function selectedUrl(info) {
-  return info.linkUrl || info.srcUrl || info.pageUrl || "";
+  // For images/video/audio Chrome supplies srcUrl; prefer the actual media bytes
+  // even when the media is wrapped in a hyperlink.
+  return info.srcUrl || info.linkUrl || info.pageUrl || "";
 }
 function basenameFromUrl(raw) {
   try {
@@ -193,6 +195,15 @@ async function getProfiles() {
 }
 async function setProfiles(profiles) {
   await chrome.storage.local.set({ profiles });
+}
+async function recordTransfer(entry) {
+  const { transferHistory = [] } = await chrome.storage.local.get("transferHistory");
+  const next = [{
+    id: crypto.randomUUID(),
+    at: new Date().toISOString(),
+    ...entry
+  }, ...(Array.isArray(transferHistory) ? transferHistory : [])].slice(0, 50);
+  await chrome.storage.local.set({ transferHistory: next });
 }
 async function notify(title, message) {
   await chrome.notifications.create({
@@ -652,10 +663,14 @@ chrome.contextMenus.onClicked.addListener(async info => {
     const profile = profiles.find(p => p.id === quickMatch[1]);
     if (!profile) return notify("REDOWN", "That destination no longer exists.");
     try {
-      const location = await ingest(profile, sourceUrl, profile.defaultCategory || "files");
+      const category = profile.defaultCategory || "files";
+      const location = await ingest(profile, sourceUrl, category);
+      await recordTransfer({ ok:true, sourceUrl, profileId:profile.id, profileName:profile.name, category, location });
       await notify("REDOWN complete", location);
     } catch (error) {
-      await notify("REDOWN failed", error?.message || String(error));
+      const message = error?.message || String(error);
+      await recordTransfer({ ok:false, sourceUrl, profileId:profile.id, profileName:profile.name, category:profile.defaultCategory || "files", error:message });
+      await notify("REDOWN failed", message);
     }
     return;
   }
@@ -689,9 +704,12 @@ chrome.contextMenus.onClicked.addListener(async info => {
     }
 
     const location = await ingest(profile, sourceUrl, category);
+    await recordTransfer({ ok:true, sourceUrl, profileId:profile.id, profileName:profile.name, category, location });
     await notify("REDOWN complete", location);
   } catch (error) {
-    await notify("REDOWN failed", error?.message || String(error));
+    const message = error?.message || String(error);
+    await recordTransfer({ ok:false, sourceUrl, profileId:profile.id, profileName:profile.name, category, error:message });
+    await notify("REDOWN failed", message);
   } finally {
     profile.folders = originalFolders;
     profile.paths = originalPaths;
@@ -705,10 +723,17 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         const profiles = await getProfiles();
         const profile = profiles.find(p => p.id === message.profileId);
         if (!profile) throw new Error("Destination not found");
-        return sendResponse({ ok:true, location:await ingest(
-          profile, String(message.sourceUrl || ""), message.category || "files",
-          message.filename || undefined
-        )});
+        const sourceUrl = String(message.sourceUrl || "");
+        const category = message.category || "files";
+        try {
+          const location = await ingest(profile, sourceUrl, category, message.filename || undefined);
+          await recordTransfer({ ok:true, sourceUrl, profileId:profile.id, profileName:profile.name, category, location });
+          return sendResponse({ ok:true, location });
+        } catch (error) {
+          const errorMessage = error?.message || String(error);
+          await recordTransfer({ ok:false, sourceUrl, profileId:profile.id, profileName:profile.name, category, error:errorMessage });
+          throw error;
+        }
       }
       if (message?.type === "cfConnect") return sendResponse({ ok:true, ...(await connectCloudflare()) });
       if (message?.type === "cfDisconnect") { await disconnectCloudflare(); return sendResponse({ ok:true }); }
@@ -718,6 +743,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       if (message?.type === "cfProvision") return sendResponse({ ok:true, profile:await provisionCloudflareProfile(message) });
       if (message?.type === "cfObjects") return sendResponse({ ok:true, objects:await listObjects(message.accountId,message.bucketName,message.prefix) });
       if (message?.type === "profiles") return sendResponse({ ok:true, profiles:await getProfiles() });
+      if (message?.type === "transferHistory") {
+        const { transferHistory = [] } = await chrome.storage.local.get("transferHistory");
+        return sendResponse({ ok:true, transferHistory });
+      }
       throw new Error("Unknown request");
     } catch (error) {
       sendResponse({ ok:false, error:error?.message || String(error) });
