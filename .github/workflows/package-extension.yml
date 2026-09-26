@@ -1,0 +1,26 @@
+name: Package REDOWN
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "extension/**"
+      - ".github/workflows/package-extension.yml"
+  workflow_dispatch:
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate manifest
+        run: node -e "JSON.parse(require('fs').readFileSync('extension/manifest.json','utf8'))"
+      - name: Package
+        run: |
+          cd extension
+          zip -r ../REDOWN-extension.zip .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: REDOWN-extension
+          path: REDOWN-extension.zip
+          if-no-files-found: error
