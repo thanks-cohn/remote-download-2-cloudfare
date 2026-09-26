@@ -68,7 +68,7 @@ async function fetchRemoteSafely(source, allowedHosts, maxRedirects = 5) {
   for (let i = 0; i <= maxRedirects; i++) {
     const response = await fetch(current.toString(), {
       redirect: "manual",
-      headers: { "user-agent": "remote-download-2-cloudflare/0.1" }
+      headers: { "user-agent": "remote-asset-ingest/0.1" }
     });
 
     if (![301, 302, 303, 307, 308].includes(response.status)) return response;
@@ -98,7 +98,7 @@ export default {
     const url = new URL(request.url);
 
     if (request.method === "GET" && url.pathname === "/health") {
-      return json({ ok: true, service: "remote-download-2-cloudflare" });
+      return json({ ok: true, service: "remote-asset-ingest" });
     }
 
     if (request.method !== "POST" || url.pathname !== "/ingest") {
