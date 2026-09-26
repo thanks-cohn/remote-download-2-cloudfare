@@ -96,7 +96,7 @@ export default {
     });
     if (request.method !== "POST") return Response.json({ ok: false, error: "Method not allowed" }, { status: 405 });
     const auth = request.headers.get("authorization") || "";
-    if (!REDOWN_SHARED_SECRET || auth !== `Bearer ${REDOWN_SHARED_SECRET}`) {
+    if (!REDOWN_SHARED_SECRET || auth !== \`Bearer \${REDOWN_SHARED_SECRET}\`) {
       return Response.json({ ok: false, error: "Unauthorized" }, { status: 401 });
     }
     try {
