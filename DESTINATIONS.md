@@ -1,92 +1,74 @@
 # Destination Profiles
 
-The app should be configured once and then behave like a simple "send this there" utility.
+A destination profile answers one question:
 
-A **Destination Profile** represents one remote destination.
+> Where should this remote asset go?
 
-## Cloudflare R2 profile
+The extension supports Cloudflare R2 and GitHub without hardcoding any repository,
+bucket, project, or service name.
 
-Example:
+## Cloudflare R2
+
+Example shape:
 
 ```json
 {
-  "name": "WebRev Assets",
+  "name": "My R2 Assets",
   "type": "cloudflare-r2",
-  "workerUrl": "https://remote-download-2-cloudflare.example.workers.dev/ingest",
-  "defaultFolder": "3d"
+  "workerUrl": "https://example.workers.dev/ingest",
+  "folders": {
+    "2d": "2d",
+    "3d": "3d",
+    "files": "files"
+  }
 }
 ```
 
-The Worker token is stored locally and encrypted by the Windows application.
+The token is saved with the profile locally in the browser extension.
 
-Transfer path:
+## GitHub
 
-```text
-source website -> Cloudflare Worker -> R2
-```
-
-The PC sends only metadata.
-
-## GitHub profile
-
-Example:
+Example shape:
 
 ```json
 {
-  "name": "WebRev GitHub Assets",
+  "name": "My GitHub Assets",
   "type": "github",
-  "repository": "thanks-cohn/WebRev",
+  "repository": "owner/repository",
   "workflowFile": "remote-ingest.yml",
   "branch": "main",
-  "defaultPath": "apps/playground/src/assets/3d-assets"
+  "paths": {
+    "2d": "assets/2d",
+    "3d": "assets/3d",
+    "files": "assets/files"
+  }
 }
 ```
 
-The GitHub token is stored locally and encrypted by the Windows application.
+If the workflow is missing, the extension can install the generic workflow into
+the configured repository automatically.
 
-The app triggers the repository workflow and supplies:
-
-- remote source URL
-- destination path
-
-Transfer path:
-
-```text
-source website -> GitHub Actions runner -> GitHub repository
-```
-
-The asset bytes do not pass through the user's PC.
+No repository name is compiled into the extension.
 
 ## Naming
 
-When the target project uses image-based discovery, users can choose a filename such as:
+Filename rules belong to the destination project, not this utility.
+
+For the WebRev-style gallery, a useful convention is:
+
+```text
+<imageName>-<anything>.<extension>
+```
+
+Examples:
 
 ```text
 first-light-rose.glb
 first-light-memory.png
+blue-room-clock.glb
 ```
 
-The destination system does not impose numeric suffixes.
+## Future desktop companion
 
-## UX
-
-The Windows app should show:
-
-- URL field
-- filename field
-- destination profile dropdown
-- destination folder/path dropdown
-- Send button
-- recent transfers/status
-
-The Chrome right-click menu should show the configured profiles rather than technical transport choices.
-
-Example:
-
-```text
-Send Remote Asset
-  → WebRev Assets
-  → WebRev GitHub Assets
-```
-
-After initial setup, ordinary use should not require editing JSON, opening terminals, or entering credentials again.
+The same destination profile concept can later be reused by a Windows desktop app
+without changing how Cloudflare or GitHub destinations are described.
