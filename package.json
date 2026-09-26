@@ -1,0 +1,14 @@
+{
+  "name": "remote-asset-ingest",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "bridge": "node local/bridge.mjs",
+    "deploy": "wrangler deploy",
+    "dev:worker": "wrangler dev"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}

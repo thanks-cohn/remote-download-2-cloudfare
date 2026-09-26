@@ -1,0 +1,12 @@
+name = "remote-asset-ingest"
+main = "worker/src/index.js"
+compatibility_date = "2026-09-26"
+
+[[r2_buckets]]
+binding = "ASSETS"
+bucket_name = "REPLACE_WITH_YOUR_BUCKET"
+
+[vars]
+PUBLIC_ASSET_BASE_URL = ""
+ALLOWED_SOURCE_HOSTS = ""
+MAX_BYTES = "104857600"

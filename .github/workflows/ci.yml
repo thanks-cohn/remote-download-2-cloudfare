@@ -1,0 +1,20 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node --check local/bridge.mjs
+      - run: node --check worker/src/index.js
+      - run: node --check extension/background.js
+      - run: node --check extension/popup.js
+      - run: node --check extension/options.js
+      - run: node -e "JSON.parse(require('fs').readFileSync('extension/manifest.json','utf8'))"

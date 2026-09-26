@@ -1,0 +1,48 @@
+name: Remote Asset Ingest
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_url:
+        description: Remote HTTPS URL to fetch
+        required: true
+        type: string
+      destination_path:
+        description: Repository path to write, e.g. apps/playground/src/assets/3d-assets/first-light-rose.glb
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate destination
+        shell: bash
+        run: |
+          case "${{ inputs.destination_path }}" in
+            /*|*..*) echo "Unsafe destination path"; exit 1 ;;
+          esac
+
+      - name: Download remotely on GitHub runner
+        shell: bash
+        run: |
+          mkdir -p "$(dirname "${{ inputs.destination_path }}")"
+          curl --fail --location --proto '=https' --max-redirs 5             --output "${{ inputs.destination_path }}"             "${{ inputs.source_url }}"
+
+      - name: Commit asset
+        shell: bash
+        run: |
+          git config user.name "remote-asset-ingest"
+          git config user.email "remote-asset-ingest@users.noreply.github.com"
+          git add -- "${{ inputs.destination_path }}"
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+          git commit -m "asset: ingest $(basename "${{ inputs.destination_path }}")"
+          git push
