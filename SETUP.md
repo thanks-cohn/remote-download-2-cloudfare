@@ -1,88 +1,70 @@
-# Setup
+# REDOWN setup
 
-## Install the extension
+## Install
 
-Load the `extension/` directory as an unpacked extension in Chrome or Edge.
-
-The extension includes:
-
-- dynamic right-click menus
-- a popup for pasted URLs
-- destination profile settings
-- direct Cloudflare Worker support
-- direct GitHub workflow dispatch
-
-No desktop app is required for v1.
-
-## Add a Cloudflare R2 destination
-
-Create or deploy the included Worker and bind it to the R2 bucket you want to use.
-
-Set the Worker secret:
-
-```bash
-npx wrangler secret put INGEST_TOKEN
-```
-
-Then add a **Cloudflare R2** profile in the extension settings with:
-
-- display name
-- Worker ingest URL
-- Worker token
-- 2D / 3D / files folder names
-
-The actual file transfer is:
+Download/extract the repository, then load this folder in Chrome:
 
 ```text
-remote source -> Worker -> R2
+<extracted repo>/extension/
 ```
 
-## Add a GitHub destination
-
-Add a **GitHub** profile with:
-
-- repository in `owner/name` form
-- target branch
-- workflow filename
-- token
-- 2D / 3D / files paths
-
-On first use, if the configured workflow is missing, the extension installs the
-small generic workflow automatically, then dispatches it.
-
-The workflow contains no hardcoded repository name.
-
-The actual file transfer is:
+Chrome path:
 
 ```text
-remote source -> GitHub Actions runner -> repository
+chrome://extensions
+Developer mode -> Load unpacked -> extension/
 ```
 
-## Token scope
+## Connect Cloudflare
 
-Use the narrowest token permissions practical for the chosen destination.
+1. Open REDOWN settings.
+2. Select **Connect Cloudflare**.
+3. Authorize the requested R2 and Worker permissions.
+4. Choose a Cloudflare account.
+5. Choose an existing R2 bucket or create a new one.
+6. Click the bucket to prepare it for REDOWN.
+7. Configure that bucket's right-click preset.
 
-The extension-only v1 stores configured credentials in `chrome.storage.local`.
-A future desktop companion can move secrets into OS-protected storage without
-changing the destination-profile format.
+REDOWN automatically provisions the per-bucket Worker required for true remote transfer.
 
-## Right-click use
+## Configure a bucket preset
 
-After saving profiles:
+Each bucket has independent behavior.
+
+### Quick send
+
+Leave its menu tree empty. Set the default destination type/path.
+
+Right-click flow:
 
 ```text
-Send Remote Asset
-  → My R2 Assets
-      → 3D
-      → 2D
-      → Files
-  → My GitHub Assets
-      → 3D
-      → 2D
-      → Files
+REDOWN -> bucket -> download starts
+```
+
+### Nested menu
+
+Select **Nested menu** and add menu items. Any item can have children, so menus can be as deep as you want.
+
+A leaf is a real download destination. For R2 it stores a prefix such as:
+
+```text
+3d/characters/heroes
+```
+
+For GitHub it stores a repository path such as:
+
+```text
+assets/3d/characters/heroes
 ```
 
 ## Paste-a-URL fallback
 
-Click the extension icon, paste the source URL, optionally provide a filename,
-choose destination and type, then press **Send**.
+Open the REDOWN popup, paste a public HTTPS URL, choose a destination, and press **Send with REDOWN**.
+
+## Security notes
+
+- Cloudflare authorization uses OAuth Authorization Code + PKCE.
+- No Cloudflare OAuth client secret is embedded in REDOWN.
+- Per-bucket Worker ingest uses a generated secret stored in extension local storage.
+- Source URLs must be public HTTPS URLs.
+- Worker-side validation blocks obvious localhost/private IPv4 targets and revalidates redirects.

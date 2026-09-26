@@ -1,74 +1,49 @@
-# Destination Profiles
+# REDOWN destination model
 
-A destination profile answers one question:
+A destination profile is independent. It may point to Cloudflare R2 or GitHub.
 
-> Where should this remote asset go?
+## Common settings
 
-The extension supports Cloudflare R2 and GitHub without hardcoding any repository,
-bucket, project, or service name.
+- display/menu label
+- right-click visibility
+- menu order
+- default category
+- menu tree
+- one-click or nested behavior
 
-## Cloudflare R2
+## Recursive menu tree
 
-Example shape:
+`menuTree` is recursive and has no application-defined depth limit.
 
-```json
-{
-  "name": "My R2 Assets",
-  "type": "cloudflare-r2",
-  "workerUrl": "https://example.workers.dev/ingest",
-  "folders": {
-    "2d": "2d",
-    "3d": "3d",
-    "files": "files"
-  }
-}
-```
-
-The token is saved with the profile locally in the browser extension.
-
-## GitHub
-
-Example shape:
+Example:
 
 ```json
-{
-  "name": "My GitHub Assets",
-  "type": "github",
-  "repository": "owner/repository",
-  "workflowFile": "remote-ingest.yml",
-  "branch": "main",
-  "paths": {
-    "2d": "assets/2d",
-    "3d": "assets/3d",
-    "files": "assets/files"
+[
+  {
+    "id": "3d",
+    "label": "3D",
+    "children": [
+      {
+        "id": "characters",
+        "label": "Characters",
+        "children": [
+          {
+            "id": "heroes",
+            "label": "Heroes",
+            "category": "3d",
+            "prefix": "3d/characters/heroes",
+            "children": []
+          }
+        ]
+      }
+    ]
   }
-}
+]
 ```
 
-If the workflow is missing, the extension can install the generic workflow into
-the configured repository automatically.
+Parent nodes only create pop-out menus. Leaf nodes perform the download.
 
-No repository name is compiled into the extension.
+For Cloudflare leaves, `prefix` selects the R2 object-key prefix.
+For GitHub leaves, `path` selects the repository directory.
 
-## Naming
-
-Filename rules belong to the destination project, not this utility.
-
-For the WebRev-style gallery, a useful convention is:
-
-```text
-<imageName>-<anything>.<extension>
-```
-
-Examples:
-
-```text
-first-light-rose.glb
-first-light-memory.png
-blue-room-clock.glb
-```
-
-## Future desktop companion
-
-The same destination profile concept can later be reused by a Windows desktop app
-without changing how Cloudflare or GitHub destinations are described.
+An empty `menuTree` means the profile is a one-click preset and REDOWN uses its saved default category/path.
