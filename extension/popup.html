@@ -1,0 +1,46 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Remote Asset Ingest</title>
+  <style>
+    body { font: 14px system-ui, sans-serif; width: 360px; margin: 0; padding: 16px; background:#111827; color:#f9fafb; }
+    h1 { font-size:18px; margin:0 0 14px; }
+    label { display:block; margin:10px 0 5px; color:#cbd5e1; }
+    input, select, button { width:100%; box-sizing:border-box; border-radius:8px; border:1px solid #374151; padding:9px 10px; font:inherit; }
+    input, select { background:#0b1220; color:#fff; }
+    button { margin-top:14px; background:#f9fafb; color:#111827; border:0; font-weight:700; cursor:pointer; }
+    #status { margin-top:10px; min-height:18px; color:#cbd5e1; word-break:break-word; }
+    .row { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+    .secondary { margin-top:8px; background:transparent; color:#cbd5e1; border:1px solid #374151; }
+  </style>
+</head>
+<body>
+  <h1>Send Remote Asset</h1>
+  <label for="url">Remote URL</label>
+  <input id="url" type="url" placeholder="https://example.com/model.glb">
+
+  <label for="filename">Filename (optional)</label>
+  <input id="filename" placeholder="first-light-rose.glb">
+
+  <label for="profile">Destination</label>
+  <select id="profile"></select>
+
+  <div class="row">
+    <div>
+      <label for="category">Type</label>
+      <select id="category">
+        <option value="3d">3D</option>
+        <option value="2d">2D</option>
+        <option value="files">Files</option>
+      </select>
+    </div>
+    <div></div>
+  </div>
+
+  <button id="send">Send</button>
+  <button id="settings" class="secondary">Destinations & credentials</button>
+  <div id="status"></div>
+  <script src="popup.js"></script>
+</body>
+</html>
