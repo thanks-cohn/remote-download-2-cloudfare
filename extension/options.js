@@ -312,7 +312,7 @@ async function addBucketPreset(bucketName){
   const stored=await chrome.storage.local.get("profiles");
   profiles=stored.profiles||[];
   renderProfiles();
-  setStatus("cf-status",`${bucketName} is ready for remote transfers. Right-click a link, image, video, audio item, or GLB link → REDOWN → ${bucketName}.`,"ok");
+  setStatus("cf-status",`${bucketName} is ready. REDOWN verified a real R2 write and prepared its default locations. Right-click a link, image, video, audio item, or GLB link → REDOWN → ${bucketName}.`,"ok");
 }
 async function openBrowser(profile){
   browseTarget=profile;
