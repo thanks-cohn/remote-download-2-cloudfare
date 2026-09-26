@@ -133,22 +133,56 @@ export default {
         return Response.json({ ok: false, error: "Remote file is larger than this REDOWN profile allows" }, { status: 413 });
       }
 
-      let count = 0;
-      const limiter = new TransformStream({
-        transform(chunk, controller) {
-          count += chunk.byteLength || 0;
-          if (count > max) throw new Error("Remote file exceeded size limit");
-          controller.enqueue(chunk);
-        }
-      });
-
       const contentType = remote.headers.get("content-type") || "application/octet-stream";
-      await env.STORAGE.put(key, remote.body.pipeThrough(limiter), {
+      const metadata = {
         httpMetadata: { contentType, cacheControl: "public, max-age=31536000, immutable" },
         customMetadata: { sourceUrl, importedBy: "REDOWN", importedAt: new Date().toISOString() }
-      });
+      };
 
-      return Response.json({ ok: true, key, bytes: count || length || null, contentType });
+      let bytesWritten = 0;
+
+      if (length > 0) {
+        // R2 requires streamed request bodies to have a known length.
+        const fixed = new FixedLengthStream(length);
+        let count = 0;
+        const limiter = new TransformStream({
+          transform(chunk, controller) {
+            count += chunk.byteLength || 0;
+            if (count > max) throw new Error("Remote file exceeded size limit");
+            controller.enqueue(chunk);
+          }
+        });
+
+        const pipePromise = remote.body.pipeThrough(limiter).pipeTo(fixed.writable);
+        const putPromise = env.STORAGE.put(key, fixed.readable, metadata);
+        await Promise.all([pipePromise, putPromise]);
+        bytesWritten = count || length;
+      } else {
+        // Some CDNs (including signed image URLs) omit Content-Length.
+        // Buffer those responses so R2 receives a body with a definite size.
+        const chunks = [];
+        let count = 0;
+        const reader = remote.body.getReader();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          count += value.byteLength || 0;
+          if (count > max) throw new Error("Remote file exceeded size limit");
+          chunks.push(value);
+        }
+
+        const combined = new Uint8Array(count);
+        let offset = 0;
+        for (const chunk of chunks) {
+          combined.set(chunk, offset);
+          offset += chunk.byteLength;
+        }
+
+        await env.STORAGE.put(key, combined, metadata);
+        bytesWritten = count;
+      }
+
+      return Response.json({ ok: true, key, bytes: bytesWritten, contentType });
     } catch (error) {
       return Response.json({ ok: false, error: error?.message || "Ingest failed" }, { status: 400 });
     }
