@@ -91,14 +91,12 @@ export default {
     if (request.method === "GET") return Response.json({
       ok: true,
       service: "REDOWN",
-      authVersion: 2,
-      authHeader: "x-redown-token",
       secretConfigured: Boolean(REDOWN_SHARED_SECRET),
       storageBound: Boolean(env.STORAGE)
     });
     if (request.method !== "POST") return Response.json({ ok: false, error: "Method not allowed" }, { status: 405 });
-    const auth = request.headers.get("x-redown-token") || "";
-    if (!REDOWN_SHARED_SECRET || auth !== REDOWN_SHARED_SECRET) {
+    const auth = request.headers.get("authorization") || "";
+    if (!REDOWN_SHARED_SECRET || auth !== `Bearer ${REDOWN_SHARED_SECRET}`) {
       return Response.json({ ok: false, error: "Unauthorized" }, { status: 401 });
     }
     try {
@@ -464,10 +462,6 @@ async function provisionCloudflareProfile({ accountId, accountName, bucketName, 
   if (!health?.ok) {
     throw new Error(`REDOWN Worker did not become reachable at ${workerUrl}${healthError ? ` (${healthError})` : ""}`);
   }
-  if (health.authVersion !== 2 || health.authHeader !== "x-redown-token") {
-    throw new Error("REDOWN Worker is reachable but an older auth version is still deployed. Click the bucket again to repair it.");
-  }
-
   const desiredFolders = {
     "2d": existing?.folders?.["2d"] || folders?.["2d"] || "2d",
     "3d": existing?.folders?.["3d"] || folders?.["3d"] || "3d",
@@ -479,7 +473,7 @@ async function provisionCloudflareProfile({ accountId, accountName, bucketName, 
   const prefixCheck = await fetch(workerUrl, {
     method: "POST",
     headers: {
-      "x-redown-token": secret,
+      authorization: `Bearer ${secret}`,
       "content-type": "application/json"
     },
     body: JSON.stringify({
@@ -559,7 +553,7 @@ async function ingestCloudflare(profile, sourceUrl, category, filename) {
   const response = await fetch(profile.workerUrl, {
     method: "POST",
     headers: {
-      "x-redown-token": profile.token || "",
+      authorization: `Bearer ${profile.token || ""}`,
       "content-type": "application/json"
     },
     body: JSON.stringify({ sourceUrl, folder, filename })
@@ -600,6 +594,81 @@ async function ingest(profile, sourceUrl, category, filename) {
   if (profile.type === "github") return ingestGitHub(profile, sourceUrl, category, finalFilename);
   throw new Error("Unsupported destination type");
 }
+
+function filenameFromDownload(item, sourceUrl) {
+  const raw = String(item?.filename || "").split(/[\\/]/).pop();
+  if (raw) return raw.replace(/[^a-zA-Z0-9._ -]/g, "-").slice(0, 180) || "download";
+  return basenameFromUrl(sourceUrl);
+}
+function categoryForDownload(item, filename, profile) {
+  const mime = String(item?.mime || "").toLowerCase();
+  const ext = String(filename || "").toLowerCase().split(".").pop();
+  if (mime.startsWith("image/") || ["jpg","jpeg","png","gif","webp","bmp","avif","svg"].includes(ext)) return "2d";
+  if (["glb","gltf"].includes(ext)) return "3d";
+  return profile.defaultCategory || "files";
+}
+async function interceptBrowserDownload(item) {
+  const { downloadIntercept = {} } = await chrome.storage.local.get("downloadIntercept");
+  if (!downloadIntercept.enabled || !downloadIntercept.profileId) return;
+
+  const sourceUrl = String(item.finalUrl || item.url || "");
+  // Do not break blob:, data:, file:, chrome-extension:, or other downloads that
+  // Cloudflare/GitHub cannot fetch directly.
+  if (!/^https:\/\//i.test(sourceUrl)) return;
+
+  const profiles = await getProfiles();
+  const profile = profiles.find(p => p.id === downloadIntercept.profileId);
+  if (!profile) return;
+
+  const filename = filenameFromDownload(item, sourceUrl);
+  const category = categoryForDownload(item, filename, profile);
+
+  try {
+    await chrome.downloads.cancel(item.id);
+  } catch {
+    // If Chrome completed the file before REDOWN could intercept it, avoid a duplicate remote copy.
+    return;
+  }
+
+  try { await chrome.downloads.erase({ id: item.id }); } catch {}
+
+  try {
+    const location = await ingest(profile, sourceUrl, category, filename);
+    await recordTransfer({
+      ok:true,
+      source:"browser-download",
+      sourceUrl,
+      profileId:profile.id,
+      profileName:profile.name,
+      category,
+      filename,
+      location
+    });
+    await notify("REDOWN intercepted download", location);
+  } catch (error) {
+    const message = error?.message || String(error);
+    await recordTransfer({
+      ok:false,
+      source:"browser-download",
+      sourceUrl,
+      profileId:profile.id,
+      profileName:profile.name,
+      category,
+      filename,
+      error:message
+    });
+    await notify("REDOWN intercepted, transfer failed", message);
+  }
+}
+
+if (chrome.downloads?.onCreated) {
+  chrome.downloads.onCreated.addListener(item => {
+    interceptBrowserDownload(item).catch(async error => {
+      await notify("REDOWN download interception failed", error?.message || String(error));
+    });
+  });
+}
+
 function sanitizeMenuId(value) {
   return String(value).replace(/[^a-zA-Z0-9_-]/g, "_");
 }
