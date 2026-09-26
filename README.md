@@ -1,11 +1,20 @@
 # Remote Asset Ingest
 
-A small Windows-first utility for sending a remote URL directly to a configured
-Cloudflare R2 bucket or GitHub repository without downloading the asset through
-the local computer.
+A Chrome/Edge extension for sending a remote asset URL directly to either:
 
-The repository name is not part of the runtime contract. It can be renamed
-without changing the application protocol.
+- Cloudflare R2, through a configured Worker
+- a GitHub repository, through a small generic workflow the extension can install automatically
+
+The asset does not need to be downloaded through the user's computer first.
+
+## Normal use
+
+1. Install the extension.
+2. Add one or more destination profiles.
+3. Right-click a link, image, video, audio item, or page.
+4. Choose **Send Remote Asset** → destination → 2D / 3D / Files.
+
+The popup also provides a paste-a-URL fallback.
 
 ## Transfer paths
 
@@ -21,16 +30,21 @@ GitHub:
 remote source -> GitHub Actions runner -> target repository
 ```
 
-In both cases the local PC sends only control metadata such as the source URL,
-destination, path, and filename.
+The extension only sends control metadata such as the source URL, destination,
+path, and filename.
 
-## User experience
+## Destination independence
 
-- Configure one or more destination profiles once.
-- Tokens stay local to the Windows user.
-- Chrome/Edge reads the profile list from the local app and builds its
-  right-click menu dynamically.
-- Right-click a link/image/media URL and choose a destination.
-- Or paste a URL directly into the Windows app and press **Send**.
+Nothing in the runtime protocol depends on this repository name.
 
-See `SPEC.md`, `SETUP.md`, and `DESTINATIONS.md`.
+Cloudflare Worker URLs, bucket-facing paths, GitHub repositories, branches,
+workflow filenames, and destination folders are all profile configuration.
+
+Renaming this repository does not change the extension protocol.
+
+## Desktop app later
+
+A native Windows companion may be added later for stronger OS-protected secret
+storage and additional integrations. It is not required for extension v1.
+
+See `SETUP.md` and `DESTINATIONS.md`.
