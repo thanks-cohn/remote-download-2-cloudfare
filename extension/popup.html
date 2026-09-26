@@ -2,45 +2,87 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Remote Asset Ingest</title>
+  <title>REDOWN</title>
   <style>
-    body { font: 14px system-ui, sans-serif; width: 360px; margin: 0; padding: 16px; background:#111827; color:#f9fafb; }
-    h1 { font-size:18px; margin:0 0 14px; }
-    label { display:block; margin:10px 0 5px; color:#cbd5e1; }
-    input, select, button { width:100%; box-sizing:border-box; border-radius:8px; border:1px solid #374151; padding:9px 10px; font:inherit; }
-    input, select { background:#0b1220; color:#fff; }
-    button { margin-top:14px; background:#f9fafb; color:#111827; border:0; font-weight:700; cursor:pointer; }
-    #status { margin-top:10px; min-height:18px; color:#cbd5e1; word-break:break-word; }
-    .row { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
-    .secondary { margin-top:8px; background:transparent; color:#cbd5e1; border:1px solid #374151; }
+    :root{
+      color-scheme:dark;
+      --bg:#0a0711; --panel:#120d1d; --panel2:#171022; --line:#2a1d3b;
+      --text:#f7f4fb; --muted:#a99fb8; --purple:#8b5cf6; --purple2:#c084fc;
+      --good:#7ce3b2; --bad:#ff8b9b;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;width:390px;background:
+      radial-gradient(circle at 85% 0%,rgba(139,92,246,.22),transparent 32%),
+      linear-gradient(180deg,#0b0713 0%,#09060e 100%);
+      color:var(--text);font:14px/1.4 Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+    .shell{padding:18px}
+    header{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}
+    .brand{display:flex;align-items:center;gap:10px}
+    .brand img{width:36px;height:36px;border-radius:11px;box-shadow:0 10px 26px rgba(92,44,190,.28)}
+    .wordmark{font-weight:900;letter-spacing:.16em;font-size:17px}
+    .tag{font-size:11px;color:var(--muted);margin-top:1px}
+    .settings{border:1px solid var(--line);background:rgba(255,255,255,.03);color:var(--text);width:34px;height:34px;border-radius:10px;cursor:pointer}
+    .card{background:linear-gradient(180deg,rgba(255,255,255,.045),rgba(255,255,255,.025));border:1px solid var(--line);border-radius:18px;padding:15px;box-shadow:0 18px 50px rgba(0,0,0,.22)}
+    label{display:block;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:0 0 7px}
+    input,select{width:100%;border:1px solid var(--line);background:#0d0914;color:var(--text);border-radius:12px;padding:11px 12px;outline:none;font:inherit}
+    input:focus,select:focus{border-color:#7550c9;box-shadow:0 0 0 3px rgba(139,92,246,.12)}
+    .field{margin-bottom:13px}
+    .grid{display:grid;grid-template-columns:1.35fr .65fr;gap:10px}
+    .send{width:100%;border:0;border-radius:13px;padding:12px 14px;margin-top:2px;cursor:pointer;
+      background:linear-gradient(135deg,#7650e8,#a46df8 58%,#c084fc);color:white;font-weight:850;letter-spacing:.02em;
+      box-shadow:0 12px 30px rgba(112,73,216,.34)}
+    .send:disabled{opacity:.48;cursor:not-allowed;box-shadow:none}
+    .status{min-height:20px;margin-top:12px;color:var(--muted);font-size:12px;word-break:break-word}
+    .status.ok{color:var(--good)} .status.bad{color:var(--bad)}
+    .empty{padding:18px;text-align:center;color:var(--muted)}
+    .empty strong{display:block;color:var(--text);margin-bottom:5px}
+    .connect{margin-top:12px;width:100%;border:1px solid #6846b5;background:#161020;color:#eadeff;border-radius:12px;padding:10px;font-weight:700;cursor:pointer}
+    .hint{margin-top:12px;font-size:11px;color:#81778e;text-align:center}
   </style>
 </head>
 <body>
-  <h1>Send Remote Asset</h1>
-  <label for="url">Remote URL</label>
-  <input id="url" type="url" placeholder="https://example.com/model.glb">
+  <div class="shell">
+    <header>
+      <div class="brand">
+        <img src="icon.svg" alt="">
+        <div><div class="wordmark">REDOWN</div><div class="tag">remote in, stored out</div></div>
+      </div>
+      <button id="settings" class="settings" title="Destinations">⚙</button>
+    </header>
 
-  <label for="filename">Filename (optional)</label>
-  <input id="filename" placeholder="first-light-rose.glb">
+    <div class="card">
+      <div class="field">
+        <label for="url">Remote URL</label>
+        <input id="url" type="url" placeholder="https://example.com/model.glb" autocomplete="off">
+      </div>
 
-  <label for="profile">Destination</label>
-  <select id="profile"></select>
+      <div class="field">
+        <label for="filename">Filename <span style="text-transform:none;font-weight:500;letter-spacing:0">(optional)</span></label>
+        <input id="filename" placeholder="first-light-rose.glb" autocomplete="off">
+      </div>
 
-  <div class="row">
-    <div>
-      <label for="category">Type</label>
-      <select id="category">
-        <option value="3d">3D</option>
-        <option value="2d">2D</option>
-        <option value="files">Files</option>
-      </select>
+      <div class="grid">
+        <div class="field">
+          <label for="profile">Destination</label>
+          <select id="profile"></select>
+        </div>
+        <div class="field">
+          <label for="category">Place in</label>
+          <select id="category">
+            <option value="3d">3D</option>
+            <option value="2d">2D</option>
+            <option value="files">Files</option>
+          </select>
+        </div>
+      </div>
+
+      <button id="send" class="send">Send with REDOWN</button>
+      <button id="setup" class="connect" hidden>Connect a destination</button>
+      <div id="status" class="status"></div>
     </div>
-    <div></div>
-  </div>
 
-  <button id="send">Send</button>
-  <button id="settings" class="secondary">Destinations & credentials</button>
-  <div id="status"></div>
+    <div class="hint">Right-click any link or media item to send it even faster.</div>
+  </div>
   <script src="popup.js"></script>
 </body>
 </html>
