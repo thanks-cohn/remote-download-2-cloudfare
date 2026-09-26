@@ -3,6 +3,7 @@ const CF_CLIENT_ID = "d9db0f71eb24cd2eed86b50a650a045e";
 const CF_AUTH_URL = "https://dash.cloudflare.com/oauth2/auth";
 const CF_TOKEN_URL = "https://dash.cloudflare.com/oauth2/token";
 const CF_API = "https://api.cloudflare.com/client/v4";
+const REDOWN_WORKER_VERSION = 2;
 
 const GITHUB_WORKFLOW = `name: REDOWN Remote Ingest
 
@@ -91,6 +92,7 @@ export default {
     if (request.method === "GET") return Response.json({
       ok: true,
       service: "REDOWN",
+      workerVersion: "__REDOWN_WORKER_VERSION__",
       secretConfigured: Boolean(REDOWN_SHARED_SECRET),
       storageBound: Boolean(env.STORAGE)
     });
@@ -421,7 +423,9 @@ async function provisionCloudflareProfile({ accountId, accountName, bucketName, 
   };
   const form = new FormData();
   form.append("metadata", new Blob([JSON.stringify(metadata)], { type: "application/json" }));
-  const deployedWorkerSource = WORKER_SOURCE.replace("__REDOWN_SHARED_SECRET__", secret);
+  const deployedWorkerSource = WORKER_SOURCE
+    .replace("__REDOWN_SHARED_SECRET__", secret)
+    .replace("__REDOWN_WORKER_VERSION__", String(REDOWN_WORKER_VERSION));
   form.append("worker.js", new Blob([deployedWorkerSource], { type: "application/javascript+module" }), "worker.js");
 
   const upload = await cfFetch(`/accounts/${accountId}/workers/scripts/${scriptName}`, {
@@ -500,6 +504,7 @@ async function provisionCloudflareProfile({ accountId, accountName, bucketName, 
     bucketName,
     scriptName,
     workerUrl,
+    workerVersion: REDOWN_WORKER_VERSION,
     token: secret,
     folders: desiredFolders,
     defaultCategory: existing?.defaultCategory || "files",
@@ -550,6 +555,16 @@ async function ensureGitHubWorkflow(profile) {
   if (!create.ok) throw new Error(`Could not install GitHub ingest workflow (${create.status})`);
 }
 async function ingestCloudflare(profile, sourceUrl, category, filename) {
+  if ((profile.workerVersion || 0) < REDOWN_WORKER_VERSION) {
+    profile = await provisionCloudflareProfile({
+      accountId: profile.accountId,
+      accountName: profile.accountName,
+      bucketName: profile.bucketName,
+      profileName: profile.name,
+      folders: profile.folders
+    });
+  }
+
   const folder = profile.folders?.[category] || category;
   const response = await fetch(profile.workerUrl, {
     method: "POST",
