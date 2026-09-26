@@ -285,7 +285,11 @@ async function refreshBuckets(){
   (result.buckets||[]).forEach(bucket=>{
     const el=document.createElement("div");el.className="bucket";
     const strong=document.createElement("strong");strong.textContent=bucket.name;
-    const span=document.createElement("span");span.textContent=[bucket.location,bucket.jurisdiction].filter(Boolean).join(" · ")||"R2 bucket";
+    const ready=profiles.some(p=>p.type==="cloudflare-r2"&&p.accountId===currentAccountId&&p.bucketName===bucket.name);
+    const span=document.createElement("span");
+    span.textContent=ready
+      ? "REDOWN ready · click to verify/repair"
+      : ([bucket.location,bucket.jurisdiction].filter(Boolean).join(" · ")||"R2 bucket")+" · click to use";
     el.append(strong,span);
     el.addEventListener("click",()=>addBucketPreset(bucket.name));
     root.append(el);
@@ -295,7 +299,7 @@ async function refreshBuckets(){
 async function addBucketPreset(bucketName){
   const account=cfAccounts.find(a=>a.id===currentAccountId);
   if(!account)return;
-  setStatus("cf-status",`Preparing ${bucketName} for REDOWN…`);
+  setStatus("cf-status",`Preparing ${bucketName}… REDOWN is verifying the remote transfer Worker before saving this preset.`);
   const result=await send({
     type:"cfProvision",
     accountId:account.id,
@@ -308,7 +312,7 @@ async function addBucketPreset(bucketName){
   const stored=await chrome.storage.local.get("profiles");
   profiles=stored.profiles||[];
   renderProfiles();
-  setStatus("cf-status",`${bucketName} is ready. It now appears in the right-click menu.`,"ok");
+  setStatus("cf-status",`${bucketName} is ready for remote transfers. Right-click a link, image, video, audio item, or GLB link → REDOWN → ${bucketName}.`,"ok");
 }
 async function openBrowser(profile){
   browseTarget=profile;
