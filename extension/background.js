@@ -102,7 +102,7 @@ export default {
         for (const value of requested) {
           const prefix = cleanPrefix(value);
           if (!prefix) continue;
-          const key = `${prefix}/.redown`;
+          const key = \`\${prefix}/.redown\`;
           await env.STORAGE.put(key, "", {
             httpMetadata: { contentType: "text/plain; charset=utf-8", cacheControl: "no-store" },
             customMetadata: { redownMarker: "true", createdAt: new Date().toISOString() }
