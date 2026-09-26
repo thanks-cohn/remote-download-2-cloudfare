@@ -259,6 +259,31 @@ function selectField(labelText,items,value,onInput){
   wrap.append(label,select);return wrap;
 }
 
+async function renderHistory(){
+  const result=await send({type:"transferHistory"});
+  const root=$("history");
+  root.replaceChildren();
+  const items=result?.transferHistory||[];
+  if(!items.length){
+    const empty=document.createElement("div");
+    empty.className="meta";
+    empty.textContent="No transfers yet. Right-click an image, video, audio item, or direct file link → REDOWN → a preset.";
+    root.append(empty);
+    return;
+  }
+  for(const item of items){
+    const row=document.createElement("div");row.className="history-row";
+    const status=document.createElement("div");status.className="history-status "+(item.ok?"ok":"bad");
+    status.textContent=item.ok?"SENT":"FAILED";
+    const main=document.createElement("div");main.className="history-main";
+    const title=document.createElement("div");title.className="history-title";
+    title.textContent=item.ok?(item.location||"Stored"):(item.error||"Transfer failed");
+    const meta=document.createElement("div");meta.className="history-meta";
+    meta.textContent=[item.profileName,item.category,item.sourceUrl].filter(Boolean).join(" · ");
+    main.append(title,meta);row.append(status,main);root.append(row);
+  }
+}
+
 async function refreshCloudflare(){
   const stored=await chrome.storage.local.get("cloudflareAuth");
   const connected=Boolean(stored.cloudflareAuth?.accessToken);
@@ -373,6 +398,7 @@ $("add-github").addEventListener("click",()=>{
   document.querySelector("#profiles .card:last-child")?.scrollIntoView({behavior:"smooth"});
 });
 $("browse-refresh").addEventListener("click",browse);
+$("refresh-history").addEventListener("click",renderHistory);
 $("close-browser").addEventListener("click",()=>{$("browser-panel").hidden=true;browseTarget=null;});
 
 (async()=>{
@@ -380,4 +406,5 @@ $("close-browser").addEventListener("click",()=>{$("browser-panel").hidden=true;
   profiles=stored.profiles||[];
   renderProfiles();
   await refreshCloudflare();
+  await renderHistory();
 })();
