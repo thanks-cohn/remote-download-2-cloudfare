@@ -88,6 +88,49 @@ async function checkedFetch(raw, hops = 5) {
 }
 export default {
   async fetch(request, env) {
+    const requestUrl = new URL(request.url);
+    const assetPrefix = "/assets/";
+
+    if ((request.method === "GET" || request.method === "HEAD") && requestUrl.pathname.startsWith(assetPrefix)) {
+      const rawKey = requestUrl.pathname.slice(assetPrefix.length);
+      let key = "";
+      try {
+        key = decodeURIComponent(rawKey);
+      } catch {
+        return new Response("Invalid asset path", { status: 400 });
+      }
+      if (!key || key.includes("..")) return new Response("Invalid asset path", { status: 400 });
+
+      const object = await env.STORAGE.get(key);
+      if (!object) {
+        return new Response("Not found", {
+          status: 404,
+          headers: { "access-control-allow-origin": "*" }
+        });
+      }
+
+      const headers = new Headers();
+      object.writeHttpMetadata(headers);
+      headers.set("etag", object.httpEtag);
+      headers.set("access-control-allow-origin", "*");
+      headers.set("access-control-expose-headers", "ETag, Content-Length, Content-Type, Accept-Ranges, Content-Range");
+      headers.set("cache-control", headers.get("cache-control") || "public, max-age=31536000, immutable");
+
+      return new Response(request.method === "HEAD" ? null : object.body, { headers });
+    }
+
+    if (request.method === "OPTIONS" && requestUrl.pathname.startsWith(assetPrefix)) {
+      return new Response(null, {
+        status: 204,
+        headers: {
+          "access-control-allow-origin": "*",
+          "access-control-allow-methods": "GET, HEAD, OPTIONS",
+          "access-control-allow-headers": "*",
+          "access-control-max-age": "86400"
+        }
+      });
+    }
+
     if (request.method === "GET") return Response.json({
       ok: true,
       service: "REDOWN",
@@ -528,6 +571,9 @@ async function provisionCloudflareProfile({ accountId, accountName, bucketName, 
     bucketName,
     scriptName,
     workerUrl,
+    publicBaseUrl: existing?.customAssetDomain
+      ? `https://${existing.customAssetDomain}/assets`
+      : `${workerUrl}/assets`,
     token: secret,
     folders: desiredFolders,
     defaultCategory: existing?.defaultCategory || "files",
@@ -575,56 +621,70 @@ async function configureBucketAssetCors(accountId, bucketName, website) {
 
   const rules = existingRules.map(rule => structuredClone(rule));
   let matched = false;
-
   for (const rule of rules) {
     const origins = Array.isArray(rule?.allowed?.origins) ? rule.allowed.origins : [];
     if (!origins.includes(origin)) continue;
     matched = true;
     rule.allowed ??= {};
-    rule.allowed.origins = origins;
     rule.allowed.methods = Array.from(new Set([...(rule.allowed.methods || []), "GET", "HEAD"]));
     rule.allowed.headers = Array.from(new Set([...(rule.allowed.headers || []), "*"]));
     rule.expose_headers = Array.from(new Set([
       ...(rule.expose_headers || []),
-      "ETag",
-      "Content-Length",
-      "Content-Type",
-      "Accept-Ranges",
-      "Content-Range"
+      "ETag", "Content-Length", "Content-Type", "Accept-Ranges", "Content-Range"
     ]));
     rule.max_age_seconds = Math.max(Number(rule.max_age_seconds) || 0, 3600);
   }
-
   if (!matched) {
     rules.push({
-      allowed: {
-        origins: [origin],
-        methods: ["GET", "HEAD"],
-        headers: ["*"]
-      },
+      allowed: { origins: [origin], methods: ["GET", "HEAD"], headers: ["*"] },
       expose_headers: ["ETag", "Content-Length", "Content-Type", "Accept-Ranges", "Content-Range"],
       max_age_seconds: 3600
     });
   }
+  await cfJson(path, { method: "PUT", body: JSON.stringify({ rules }) });
+  return origin;
+}
 
-  const updated = await cfJson(path, {
-    method: "PUT",
-    body: JSON.stringify({ rules })
-  });
-
+async function configureAssetDomain(accountId, bucketName, website) {
+  const origin = normalizeWebOrigin(website);
+  const hostname = new URL(origin).hostname;
   const profiles = await getProfiles();
   const index = profiles.findIndex(p =>
     p.type === "cloudflare-r2" && p.accountId === accountId && p.bucketName === bucketName
   );
-  if (index >= 0) {
-    profiles[index] = {
-      ...profiles[index],
-      allowedWebsiteOrigin: origin
-    };
-    await setProfiles(profiles);
-  }
+  if (index < 0) throw new Error("REDOWN destination not found");
+  const profile = profiles[index];
 
-  return { origin, cors: updated };
+  const attached = await cfJson(`/accounts/${accountId}/workers/domains`, {
+    method: "PUT",
+    body: JSON.stringify({
+      hostname,
+      service: profile.scriptName
+    })
+  });
+
+  // Keep R2 CORS compatible too, in case the bucket later gets a direct public R2 domain.
+  await configureBucketAssetCors(accountId, bucketName, origin);
+
+  profiles[index] = {
+    ...profile,
+    customAssetDomain: hostname,
+    allowedWebsiteOrigin: origin,
+    publicBaseUrl: `https://${hostname}/assets`
+  };
+  await setProfiles(profiles);
+
+  return {
+    origin,
+    hostname,
+    publicBaseUrl: profiles[index].publicBaseUrl,
+    domain: attached
+  };
+}
+
+function publicAssetUrl(profile, key) {
+  const base = String(profile.publicBaseUrl || `${profile.workerUrl}/assets`).replace(/\/+$/, "");
+  return `${base}/${String(key).split("/").map(encodeURIComponent).join("/")}`;
 }
 
 async function listObjects(accountId, bucketName, prefix = "") {
@@ -677,7 +737,7 @@ async function ingestCloudflare(profile, sourceUrl, category, filename) {
   let body;
   try { body = JSON.parse(text); } catch { body = { ok: false, error: text }; }
   if (!response.ok || !body.ok) throw new Error(body.error || `Cloudflare ingest failed (${response.status})`);
-  return `${profile.bucketName}/${body.key}`;
+  return publicAssetUrl(profile, body.key);
 }
 async function ingestGitHub(profile, sourceUrl, category, filename) {
   const repo = String(profile.repository || "").trim();
@@ -874,7 +934,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       if (message?.type === "cfBuckets") return sendResponse({ ok:true, buckets:await listBuckets(message.accountId) });
       if (message?.type === "cfCreateBucket") return sendResponse({ ok:true, bucket:await createBucket(message.accountId,message.name,message.locationHint) });
       if (message?.type === "cfProvision") return sendResponse({ ok:true, profile:await provisionCloudflareProfile(message) });
-      if (message?.type === "cfSetAssetCors") return sendResponse({ ok:true, ...(await configureBucketAssetCors(message.accountId,message.bucketName,message.website)) });
+      if (message?.type === "cfSetAssetCors" || message?.type === "cfSetAssetDomain") {
+        return sendResponse({ ok:true, ...(await configureAssetDomain(message.accountId,message.bucketName,message.website)) });
+      }
       if (message?.type === "cfObjects") return sendResponse({ ok:true, objects:await listObjects(message.accountId,message.bucketName,message.prefix) });
       if (message?.type === "profiles") return sendResponse({ ok:true, profiles:await getProfiles() });
       if (message?.type === "transferHistory") {
