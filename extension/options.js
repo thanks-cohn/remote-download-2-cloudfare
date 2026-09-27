@@ -5,6 +5,7 @@ let currentAccountId="";
 let browseTarget=null;
 let workspaceTarget=null;
 let workspaceObjects=[];
+let workspacePreviewExpanded=false;
 
 function uid(){return crypto.randomUUID();}
 function setStatus(id,msg,kind=""){const el=$(id);el.textContent=msg||"";el.className="status"+(kind?" "+kind:"");}
@@ -508,10 +509,18 @@ async function showWorkspacePreview(obj,row){
   const url=publicObjectUrl(workspaceTarget,key);
   const type=objectContentType(obj,key);
 
+  const head=document.createElement("div");
+  head.className="preview-head";
   const title=document.createElement("div");
   title.className="preview-title";
   title.textContent=key;
-  root.append(title);
+  const expand=document.createElement("button");
+  expand.className="ghost";
+  expand.type="button";
+  expand.textContent=workspacePreviewExpanded?"Collapse":"Expand";
+  expand.addEventListener("click",()=>setWorkspacePreviewExpanded(!workspacePreviewExpanded));
+  head.append(title,expand);
+  root.append(head);
 
   const media=document.createElement("div");
   media.className="preview-media";
@@ -562,6 +571,15 @@ async function showWorkspacePreview(obj,row){
 
   appendDetails(root,obj,key,url,type);
 }
+
+function setWorkspacePreviewExpanded(expanded){
+  workspacePreviewExpanded=Boolean(expanded);
+  const grid=document.querySelector(".workspace-grid");
+  grid?.classList.toggle("expanded",workspacePreviewExpanded);
+  const button=$("#preview-expand")||document.querySelector("#workspace-preview .preview-head button");
+  if(button)button.textContent=workspacePreviewExpanded?"Collapse":"Expand";
+}
+
 async function browseWorkspace(){
   if(!workspaceTarget)return;
   const root=$("workspace-objects");
@@ -582,7 +600,13 @@ async function browseWorkspace(){
   });
   if(!workspaceObjects.length){
     const e=document.createElement("div");e.className="object";e.textContent="No objects under this prefix.";root.append(e);
-    $("workspace-preview").replaceChildren(Object.assign(document.createElement("div"),{className:"meta",textContent:"Nothing to preview here yet."}));
+    const preview=$("workspace-preview");
+    preview.replaceChildren();
+    const head=document.createElement("div");head.className="preview-head";
+    const note=document.createElement("div");note.className="meta";note.textContent="Nothing to preview here yet.";
+    const expand=document.createElement("button");expand.className="ghost";expand.type="button";expand.textContent=workspacePreviewExpanded?"Collapse":"Expand";
+    expand.addEventListener("click",()=>setWorkspacePreviewExpanded(!workspacePreviewExpanded));
+    head.append(note,expand);preview.append(head);
     return;
   }
   for(const obj of workspaceObjects.slice(0,300)){
@@ -619,6 +643,7 @@ function wireWorkspace(){
   $("workspace-browse").addEventListener("click",browseWorkspace);
   $("workspace-refresh").addEventListener("click",browseWorkspace);
   $("workspace-prefix").addEventListener("keydown",e=>{if(e.key==="Enter")browseWorkspace();});
+  $("preview-expand")?.addEventListener("click",()=>setWorkspacePreviewExpanded(!workspacePreviewExpanded));
 }
 
 async function renderHistory(){
