@@ -208,6 +208,16 @@ function selectedUrl(info) {
   // even when the media is wrapped in a hyperlink.
   return info.srcUrl || info.linkUrl || info.pageUrl || "";
 }
+function categoryForContext(info, sourceUrl, profile) {
+  if (info?.mediaType === "video") return "videos";
+  if (info?.mediaType === "image") return "2d";
+  if (info?.mediaType === "audio") return "files";
+  const ext = basenameFromUrl(sourceUrl).toLowerCase().split(".").pop();
+  if (["mp4","webm","mov","m4v","avi","mkv"].includes(ext)) return "videos";
+  if (["jpg","jpeg","png","gif","webp","bmp","avif","svg"].includes(ext)) return "2d";
+  if (["glb","gltf"].includes(ext)) return "3d";
+  return profile?.defaultCategory || "files";
+}
 function basenameFromUrl(raw) {
   try {
     const u = new URL(raw);
@@ -596,115 +606,6 @@ async function ingest(profile, sourceUrl, category, filename) {
   throw new Error("Unsupported destination type");
 }
 
-function filenameFromDownload(item, sourceUrl) {
-  const raw = String(item?.filename || "").split(/[\\/]/).pop();
-  if (raw) return raw.replace(/[^a-zA-Z0-9._ -]/g, "-").slice(0, 180) || "download";
-  return basenameFromUrl(sourceUrl);
-}
-function categoryForDownload(item, filename, profile) {
-  const mime = String(item?.mime || "").toLowerCase();
-  const ext = String(filename || "").toLowerCase().split(".").pop();
-  if (mime.startsWith("image/") || ["jpg","jpeg","png","gif","webp","bmp","avif","svg"].includes(ext)) return "2d";
-  if (mime.startsWith("video/") || ["mp4","webm","mov","m4v","avi","mkv"].includes(ext)) return "videos";
-  if (["glb","gltf"].includes(ext)) return "3d";
-  return profile.defaultCategory || "files";
-}
-async function interceptBrowserDownload(item) {
-  // Pause immediately so Chrome cannot win the race and finish writing locally
-  // while REDOWN looks up settings/profile state.
-  let paused = false;
-  try {
-    await chrome.downloads.pause(item.id);
-    paused = true;
-  } catch {}
-
-  const resumeLocal = async () => {
-    if (!paused) return;
-    try { await chrome.downloads.resume(item.id); } catch {}
-  };
-
-  try {
-    const { downloadIntercept = {} } = await chrome.storage.local.get("downloadIntercept");
-    if (!downloadIntercept.enabled || !downloadIntercept.profileId) {
-      await resumeLocal();
-      return;
-    }
-
-    const sourceUrl = String(item.finalUrl || item.url || "");
-    // Leave downloads REDOWN cannot remotely fetch alone.
-    if (!/^https:\/\//i.test(sourceUrl)) {
-      await recordTransfer({
-        ok:false,
-        source:"browser-download",
-        sourceUrl,
-        category:"unsupported",
-        error:`Browser download left local: unsupported source URL (${sourceUrl.split(":")[0] || "unknown"}:)`
-      });
-      await resumeLocal();
-      return;
-    }
-
-    const profiles = await getProfiles();
-    const profile = profiles.find(p => p.id === downloadIntercept.profileId);
-    if (!profile) {
-      await recordTransfer({
-        ok:false,
-        source:"browser-download",
-        sourceUrl,
-        error:"Browser download left local: configured REDOWN destination no longer exists"
-      });
-      await resumeLocal();
-      return;
-    }
-
-    const filename = filenameFromDownload(item, sourceUrl);
-    const category = categoryForDownload(item, filename, profile);
-
-    // Cancel only after we know REDOWN can handle this URL and destination.
-    await chrome.downloads.cancel(item.id);
-    paused = false;
-    try { await chrome.downloads.erase({ id: item.id }); } catch {}
-
-    try {
-      const location = await ingest(profile, sourceUrl, category, filename);
-      await recordTransfer({
-        ok:true,
-        source:"browser-download",
-        sourceUrl,
-        profileId:profile.id,
-        profileName:profile.name,
-        category,
-        filename,
-        location
-      });
-      await notify("REDOWN intercepted download", location);
-    } catch (error) {
-      const message = error?.message || String(error);
-      await recordTransfer({
-        ok:false,
-        source:"browser-download",
-        sourceUrl,
-        profileId:profile.id,
-        profileName:profile.name,
-        category,
-        filename,
-        error:message
-      });
-      await notify("REDOWN intercepted, transfer failed", message);
-    }
-  } catch (error) {
-    await resumeLocal();
-    throw error;
-  }
-}
-
-if (chrome.downloads?.onCreated) {
-  chrome.downloads.onCreated.addListener(item => {
-    interceptBrowserDownload(item).catch(async error => {
-      await notify("REDOWN download interception failed", error?.message || String(error));
-    });
-  });
-}
 
 function sanitizeMenuId(value) {
   return String(value).replace(/[^a-zA-Z0-9_-]/g, "_");
@@ -791,7 +692,7 @@ chrome.contextMenus.onClicked.addListener(async info => {
     const profile = profiles.find(p => p.id === quickMatch[1]);
     if (!profile) return notify("REDOWN", "That destination no longer exists.");
     try {
-      const category = profile.defaultCategory || "files";
+      const category = categoryForContext(info, sourceUrl, profile);
       const location = await ingest(profile, sourceUrl, category);
       await recordTransfer({ ok:true, sourceUrl, profileId:profile.id, profileName:profile.name, category, location });
       await notify("REDOWN complete", location);
