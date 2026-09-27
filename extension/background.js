@@ -456,21 +456,39 @@ async function provisionCloudflareProfile({ accountId, accountName, bucketName, 
   // Do not save a broken preset. Confirm Cloudflare can actually execute the Worker.
   let health = null;
   let healthError = null;
-  for (let attempt = 0; attempt < 6; attempt++) {
+  const healthStartedAt = Date.now();
+  const healthTimeoutMs = 60_000;
+  let attempt = 0;
+
+  while (Date.now() - healthStartedAt < healthTimeoutMs) {
+    attempt++;
     try {
-      const response = await fetch(workerUrl, { method: "GET", cache: "no-store" });
+      const response = await fetch(workerUrl, {
+        method: "GET",
+        cache: "no-store",
+        headers: { "cache-control": "no-cache" }
+      });
       if (response.ok) {
         health = await response.json().catch(() => ({ ok: true }));
         if (health?.ok) break;
       }
       healthError = `HTTP ${response.status}`;
     } catch (error) {
+      // A freshly-created workers.dev route can be temporarily unreachable
+      // from a browser profile/resolver even though the deployment API succeeded.
       healthError = error?.message || String(error);
     }
-    await new Promise(resolve => setTimeout(resolve, 500 * (attempt + 1)));
+
+    const waitMs = Math.min(1000 + attempt * 500, 4000);
+    await new Promise(resolve => setTimeout(resolve, waitMs));
   }
+
   if (!health?.ok) {
-    throw new Error(`REDOWN Worker did not become reachable at ${workerUrl}${healthError ? ` (${healthError})` : ""}`);
+    throw new Error(
+      `REDOWN deployed the Worker, but this browser could not reach ${workerUrl} within 60 seconds` +
+      `${healthError ? ` (last error: ${healthError})` : ""}. ` +
+      "This is a workers.dev reachability/DNS issue, not an R2 authorization failure."
+    );
   }
   const desiredFolders = {
     "2d": existing?.folders?.["2d"] || folders?.["2d"] || "2d",
