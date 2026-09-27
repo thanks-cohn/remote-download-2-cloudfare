@@ -168,6 +168,74 @@ function renderTreeNode(profile,node,depth){
   return item;
 }
 
+function assetCorsControl(profile){
+  const wrap=document.createElement("div");
+  wrap.style.gridColumn="1 / -1";
+
+  const label=document.createElement("label");
+  label.textContent="Website allowed to load assets";
+
+  const row=document.createElement("div");
+  row.style.display="grid";
+  row.style.gridTemplateColumns="minmax(0,1fr) auto";
+  row.style.gap="8px";
+
+  const input=document.createElement("input");
+  input.type="text";
+  input.value=profile.allowedWebsiteOrigin||"";
+  input.placeholder="webrev.online or cdn.website.com";
+
+  const apply=document.createElement("button");
+  apply.type="button";
+  apply.className="secondary";
+  apply.textContent="Apply CORS";
+
+  const status=document.createElement("div");
+  status.className="status";
+  status.style.marginTop="7px";
+  status.textContent=profile.allowedWebsiteOrigin
+    ? `Allowed origin: ${profile.allowedWebsiteOrigin}`
+    : "Adds this website to the R2 bucket's allowed CORS origins for 2D, 3D, video, and future asset types.";
+
+  input.addEventListener("input",()=>{
+    profile.allowedWebsiteOrigin=input.value.trim();
+    scheduleSave();
+  });
+
+  apply.addEventListener("click",async()=>{
+    if(apply.disabled)return;
+    apply.disabled=true;
+    const previous=apply.textContent;
+    apply.textContent="Applying…";
+    status.className="status";
+    status.textContent="Updating Cloudflare R2 CORS…";
+    try{
+      const result=await send({
+        type:"cfSetAssetCors",
+        accountId:profile.accountId,
+        bucketName:profile.bucketName,
+        website:input.value
+      });
+      if(!result?.ok)throw new Error(result?.error||"Could not update bucket CORS");
+      profile.allowedWebsiteOrigin=result.origin;
+      input.value=result.origin;
+      await saveProfiles();
+      status.className="status ok";
+      status.textContent=`${result.origin} can now request assets from this R2 bucket.`;
+    }catch(error){
+      status.className="status bad";
+      status.textContent=error?.message||String(error);
+    }finally{
+      apply.disabled=false;
+      apply.textContent=previous;
+    }
+  });
+
+  row.append(input,apply);
+  wrap.append(label,row,status);
+  return wrap;
+}
+
 function renderProfiles(){
   const root=$("profiles");
   root.replaceChildren();
@@ -204,7 +272,8 @@ function renderProfiles(){
         field("3D prefix",p.folders?.["3d"]||"3d",v=>(p.folders??={})["3d"]=v),
         field("2D prefix",p.folders?.["2d"]||"2d",v=>(p.folders??={})["2d"]=v),
         field("Video prefix",p.folders?.videos||"videos",v=>(p.folders??={}).videos=v),
-        field("Files prefix",p.folders?.files||"files",v=>(p.folders??={}).files=v)
+        field("Files prefix",p.folders?.files||"files",v=>(p.folders??={}).files=v),
+        assetCorsControl(p)
       );
     }else{
       grid.append(
