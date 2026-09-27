@@ -71,6 +71,47 @@ function cleanPrefix(value) {
   return String(value || "").split("/").map(x => x.trim()).filter(Boolean)
     .map(x => x.replace(/[^a-zA-Z0-9._ -]/g, "-")).join("/");
 }
+function extensionForContentType(contentType) {
+  const type = String(contentType || "").split(";")[0].trim().toLowerCase();
+  const map = {
+    "image/jpeg": "jpg",
+    "image/png": "png",
+    "image/webp": "webp",
+    "image/gif": "gif",
+    "image/avif": "avif",
+    "image/svg+xml": "svg",
+    "image/bmp": "bmp",
+    "video/mp4": "mp4",
+    "video/webm": "webm",
+    "video/quicktime": "mov",
+    "audio/mpeg": "mp3",
+    "audio/ogg": "ogg",
+    "audio/wav": "wav",
+    "model/gltf-binary": "glb",
+    "model/gltf+json": "gltf",
+    "application/pdf": "pdf"
+  };
+  return map[type] || "";
+}
+function filenameWithInferredExtension(filename, contentType) {
+  const clean = cleanName(filename);
+  if (/\.[a-z0-9]{1,10}$/i.test(clean)) return clean;
+  const ext = extensionForContentType(contentType);
+  return ext ? clean + "." + ext : clean;
+}
+function safePublicBase(value, requestUrl) {
+  const fallback = requestUrl.origin + "/assets";
+  const raw = String(value || "").trim();
+  if (!raw) return fallback;
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== "https:") return fallback;
+    return url.toString().replace(/\/+$/, "");
+  } catch {
+    return fallback;
+  }
+}
+
 async function checkedFetch(raw, hops = 5) {
   let url = new URL(raw);
   if (url.protocol !== "https:" || url.username || url.password || privateHost(url.hostname)) {
@@ -163,9 +204,8 @@ export default {
 
       const sourceUrl = String(body.sourceUrl || "");
       const source = new URL(sourceUrl);
-      const filename = cleanName(body.filename || source.pathname);
+      const requestedFilename = cleanName(body.filename || source.pathname);
       const prefix = cleanPrefix(body.folder);
-      const key = prefix ? \`\${prefix}/\${filename}\` : filename;
 
       const remote = await checkedFetch(sourceUrl);
       if (!remote.ok || !remote.body) throw new Error(\`Remote fetch failed: \${remote.status}\`);
@@ -177,11 +217,23 @@ export default {
       }
 
       const contentType = remote.headers.get("content-type") || "application/octet-stream";
+      const filename = filenameWithInferredExtension(requestedFilename, contentType);
+      const key = prefix ? \`\${prefix}/\${filename}\` : filename;
+      const encodedKey = key.split("/").map(encodeURIComponent).join("/");
+      const publicPath = \`/assets/\${encodedKey}\`;
+      const publicBaseUrl = safePublicBase(body.publicBaseUrl, requestUrl);
+      const publicUrl = \`\${publicBaseUrl}/\${encodedKey}\`;
+
       const metadata = {
         httpMetadata: { contentType, cacheControl: "public, max-age=31536000, immutable" },
-        customMetadata: { sourceUrl, importedBy: "REDOWN", importedAt: new Date().toISOString() }
+        customMetadata: {
+          sourceUrl,
+          publicPath,
+          publicUrl,
+          importedBy: "REDOWN",
+          importedAt: new Date().toISOString()
+        }
       };
-
       let bytesWritten = 0;
 
       if (length > 0) {
@@ -225,7 +277,7 @@ export default {
         bytesWritten = count;
       }
 
-      return Response.json({ ok: true, key, bytes: bytesWritten, contentType });
+      return Response.json({ ok: true, key, filename, publicPath, publicUrl, bytes: bytesWritten, contentType });
     } catch (error) {
       return Response.json({ ok: false, error: error?.message || "Ingest failed" }, { status: 400 });
     }
@@ -731,13 +783,13 @@ async function ingestCloudflare(profile, sourceUrl, category, filename) {
       authorization: `Bearer ${profile.token || ""}`,
       "content-type": "application/json"
     },
-    body: JSON.stringify({ sourceUrl, folder, filename })
+    body: JSON.stringify({ sourceUrl, folder, filename, publicBaseUrl: profile.publicBaseUrl || `${profile.workerUrl}/assets` })
   });
   const text = await response.text();
   let body;
   try { body = JSON.parse(text); } catch { body = { ok: false, error: text }; }
   if (!response.ok || !body.ok) throw new Error(body.error || `Cloudflare ingest failed (${response.status})`);
-  return publicAssetUrl(profile, body.key);
+  return body.publicUrl || publicAssetUrl(profile, body.key);
 }
 async function ingestGitHub(profile, sourceUrl, category, filename) {
   const repo = String(profile.repository || "").trim();
