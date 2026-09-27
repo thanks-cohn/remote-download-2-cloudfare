@@ -118,7 +118,7 @@ function renderTreeNode(profile,node,depth){
   labelInput.addEventListener("input",()=>{node.label=labelInput.value;scheduleSave();});
 
   const kind=document.createElement("select");
-  [["files","Files"],["3d","3D"],["2d","2D"]].forEach(([v,t])=>{
+  [["files","Files"],["videos","Videos"],["3d","3D"],["2d","2D"]].forEach(([v,t])=>{
     const o=document.createElement("option");o.value=v;o.textContent=t;o.selected=(node.category||"files")===v;kind.append(o);
   });
   kind.title="Target category";
@@ -194,7 +194,7 @@ function renderProfiles(){
     grid.append(
       field("Menu label",p.menuLabel||p.name||"",v=>p.menuLabel=v),
       selectField("Default path",[
-        ["3d","3D"],["2d","2D"],["files","Files"]
+        ["3d","3D"],["2d","2D"],["videos","Videos"],["files","Files"]
       ],p.defaultCategory||"files",v=>p.defaultCategory=v),
       field("Order",String(p.menuOrder??index),v=>p.menuOrder=Number(v)||0,"number")
     );
@@ -203,6 +203,7 @@ function renderProfiles(){
       grid.append(
         field("3D prefix",p.folders?.["3d"]||"3d",v=>(p.folders??={})["3d"]=v),
         field("2D prefix",p.folders?.["2d"]||"2d",v=>(p.folders??={})["2d"]=v),
+        field("Video prefix",p.folders?.videos||"videos",v=>(p.folders??={}).videos=v),
         field("Files prefix",p.folders?.files||"files",v=>(p.folders??={}).files=v)
       );
     }else{
@@ -212,6 +213,7 @@ function renderProfiles(){
         field("GitHub token",p.token||"",v=>p.token=v,"password"),
         field("3D path",p.paths?.["3d"]||"assets/3d",v=>(p.paths??={})["3d"]=v),
         field("2D path",p.paths?.["2d"]||"assets/2d",v=>(p.paths??={})["2d"]=v),
+        field("Video path",p.paths?.videos||"assets/videos",v=>(p.paths??={}).videos=v),
         field("Files path",p.paths?.files||"assets/files",v=>(p.paths??={}).files=v)
       );
     }
@@ -376,7 +378,7 @@ async function addBucketPreset(bucketName){
     accountName:account.name,
     bucketName,
     profileName:bucketName,
-    folders:{"3d":"3d","2d":"2d","files":"files"}
+    folders:{"3d":"3d","2d":"2d","videos":"videos","files":"files"}
   });
   if(!result?.ok){setStatus("cf-status",result?.error||"Could not prepare bucket","bad");return;}
   const stored=await chrome.storage.local.get("profiles");
@@ -436,7 +438,7 @@ $("add-github").addEventListener("click",()=>{
   profiles.push({
     id:uid(),name:"GitHub Assets",type:"github",repository:"",branch:"main",
     workflowFile:"redown-ingest.yml",token:"",
-    paths:{"2d":"assets/2d","3d":"assets/3d","files":"assets/files"},
+    paths:{"2d":"assets/2d","3d":"assets/3d","videos":"assets/videos","files":"assets/files"},
     defaultCategory:"files",menuTree:[],showInContextMenu:true,menuOrder:profiles.length
   });
   renderProfiles();

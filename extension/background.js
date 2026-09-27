@@ -465,6 +465,7 @@ async function provisionCloudflareProfile({ accountId, accountName, bucketName, 
   const desiredFolders = {
     "2d": existing?.folders?.["2d"] || folders?.["2d"] || "2d",
     "3d": existing?.folders?.["3d"] || folders?.["3d"] || "3d",
+    "videos": existing?.folders?.videos || folders?.videos || "videos",
     "files": existing?.folders?.files || folders?.files || "files"
   };
 
@@ -604,60 +605,96 @@ function categoryForDownload(item, filename, profile) {
   const mime = String(item?.mime || "").toLowerCase();
   const ext = String(filename || "").toLowerCase().split(".").pop();
   if (mime.startsWith("image/") || ["jpg","jpeg","png","gif","webp","bmp","avif","svg"].includes(ext)) return "2d";
+  if (mime.startsWith("video/") || ["mp4","webm","mov","m4v","avi","mkv"].includes(ext)) return "videos";
   if (["glb","gltf"].includes(ext)) return "3d";
   return profile.defaultCategory || "files";
 }
 async function interceptBrowserDownload(item) {
-  const { downloadIntercept = {} } = await chrome.storage.local.get("downloadIntercept");
-  if (!downloadIntercept.enabled || !downloadIntercept.profileId) return;
+  // Pause immediately so Chrome cannot win the race and finish writing locally
+  // while REDOWN looks up settings/profile state.
+  let paused = false;
+  try {
+    await chrome.downloads.pause(item.id);
+    paused = true;
+  } catch {}
 
-  const sourceUrl = String(item.finalUrl || item.url || "");
-  // Do not break blob:, data:, file:, chrome-extension:, or other downloads that
-  // Cloudflare/GitHub cannot fetch directly.
-  if (!/^https:\/\//i.test(sourceUrl)) return;
-
-  const profiles = await getProfiles();
-  const profile = profiles.find(p => p.id === downloadIntercept.profileId);
-  if (!profile) return;
-
-  const filename = filenameFromDownload(item, sourceUrl);
-  const category = categoryForDownload(item, filename, profile);
+  const resumeLocal = async () => {
+    if (!paused) return;
+    try { await chrome.downloads.resume(item.id); } catch {}
+  };
 
   try {
+    const { downloadIntercept = {} } = await chrome.storage.local.get("downloadIntercept");
+    if (!downloadIntercept.enabled || !downloadIntercept.profileId) {
+      await resumeLocal();
+      return;
+    }
+
+    const sourceUrl = String(item.finalUrl || item.url || "");
+    // Leave downloads REDOWN cannot remotely fetch alone.
+    if (!/^https:\/\//i.test(sourceUrl)) {
+      await recordTransfer({
+        ok:false,
+        source:"browser-download",
+        sourceUrl,
+        category:"unsupported",
+        error:`Browser download left local: unsupported source URL (${sourceUrl.split(":")[0] || "unknown"}:)`
+      });
+      await resumeLocal();
+      return;
+    }
+
+    const profiles = await getProfiles();
+    const profile = profiles.find(p => p.id === downloadIntercept.profileId);
+    if (!profile) {
+      await recordTransfer({
+        ok:false,
+        source:"browser-download",
+        sourceUrl,
+        error:"Browser download left local: configured REDOWN destination no longer exists"
+      });
+      await resumeLocal();
+      return;
+    }
+
+    const filename = filenameFromDownload(item, sourceUrl);
+    const category = categoryForDownload(item, filename, profile);
+
+    // Cancel only after we know REDOWN can handle this URL and destination.
     await chrome.downloads.cancel(item.id);
-  } catch {
-    // If Chrome completed the file before REDOWN could intercept it, avoid a duplicate remote copy.
-    return;
-  }
+    paused = false;
+    try { await chrome.downloads.erase({ id: item.id }); } catch {}
 
-  try { await chrome.downloads.erase({ id: item.id }); } catch {}
-
-  try {
-    const location = await ingest(profile, sourceUrl, category, filename);
-    await recordTransfer({
-      ok:true,
-      source:"browser-download",
-      sourceUrl,
-      profileId:profile.id,
-      profileName:profile.name,
-      category,
-      filename,
-      location
-    });
-    await notify("REDOWN intercepted download", location);
+    try {
+      const location = await ingest(profile, sourceUrl, category, filename);
+      await recordTransfer({
+        ok:true,
+        source:"browser-download",
+        sourceUrl,
+        profileId:profile.id,
+        profileName:profile.name,
+        category,
+        filename,
+        location
+      });
+      await notify("REDOWN intercepted download", location);
+    } catch (error) {
+      const message = error?.message || String(error);
+      await recordTransfer({
+        ok:false,
+        source:"browser-download",
+        sourceUrl,
+        profileId:profile.id,
+        profileName:profile.name,
+        category,
+        filename,
+        error:message
+      });
+      await notify("REDOWN intercepted, transfer failed", message);
+    }
   } catch (error) {
-    const message = error?.message || String(error);
-    await recordTransfer({
-      ok:false,
-      source:"browser-download",
-      sourceUrl,
-      profileId:profile.id,
-      profileName:profile.name,
-      category,
-      filename,
-      error:message
-    });
-    await notify("REDOWN intercepted, transfer failed", message);
+    await resumeLocal();
+    throw error;
   }
 }
 
