@@ -3,6 +3,8 @@ let profiles=[];
 let cfAccounts=[];
 let currentAccountId="";
 let browseTarget=null;
+let workspaceTarget=null;
+let workspaceObjects=[];
 
 function uid(){return crypto.randomUUID();}
 function setStatus(id,msg,kind=""){const el=$(id);el.textContent=msg||"";el.className="status"+(kind?" "+kind:"");}
@@ -339,6 +341,7 @@ function renderProfiles(){
     root.append(card);
   });
 
+  renderWorkspaceProfiles();
   scheduleSave();
 }
 
@@ -356,6 +359,266 @@ function selectField(labelText,items,value,onInput){
   items.forEach(([v,t])=>{const o=document.createElement("option");o.value=v;o.textContent=t;o.selected=v===value;select.append(o);});
   select.addEventListener("change",()=>{onInput(select.value);scheduleSave();});
   wrap.append(label,select);return wrap;
+}
+
+function formatBytes(value){
+  const n=Number(value||0);
+  if(!Number.isFinite(n)||n<=0)return "—";
+  const units=["B","KB","MB","GB","TB"];
+  let x=n,i=0;
+  while(x>=1024&&i<units.length-1){x/=1024;i++;}
+  return `${x>=10||i===0?x.toFixed(0):x.toFixed(1)} ${units[i]}`;
+}
+function publicObjectUrl(profile,key){
+  const base=(profile.publicBaseUrl||(`${profile.workerUrl}/assets`)).replace(/\/+$/,"");
+  return `${base}/${String(key).split("/").map(encodeURIComponent).join("/")}`;
+}
+function r2Profiles(){return profiles.filter(p=>p.type==="cloudflare-r2");}
+function renderWorkspaceProfiles(){
+  const select=$("local-profile");
+  const tools=$("local-tools");
+  if(!select||!tools)return;
+  const r2=r2Profiles();
+  tools.hidden=!r2.length;
+  if(!r2.length){workspaceTarget=null;return;}
+  const previous=select.value;
+  select.replaceChildren();
+  for(const profile of r2){
+    const option=document.createElement("option");
+    option.value=profile.id;
+    option.textContent=`${displayName(profile)} · ${profile.bucketName}`;
+    select.append(option);
+  }
+  if(r2.some(p=>p.id===previous))select.value=previous;
+  workspaceTarget=r2.find(p=>p.id===select.value)||r2[0];
+}
+function categoryFromPrefix(prefix){
+  const first=String(prefix||"").split("/").filter(Boolean)[0]?.toLowerCase();
+  if(first==="2d")return "2d";
+  if(first==="3d")return "3d";
+  if(first==="videos"||first==="video")return "videos";
+  return "files";
+}
+async function uploadLocalFiles(fileList){
+  const files=Array.from(fileList||[]);
+  if(!files.length)return;
+  const profile=workspaceTarget;
+  if(!profile)return setStatus("local-upload-status","Choose an R2 bucket first.","bad");
+  const prefix=$("local-prefix").value.trim();
+  const status=$("local-upload-status");
+  let completed=0;
+  for(const file of files){
+    status.className="status";
+    status.textContent=`Uploading ${file.name} (${completed+1}/${files.length})…`;
+    try{
+      const response=await fetch(profile.workerUrl,{
+        method:"POST",
+        headers:{
+          authorization:`Bearer ${profile.token||""}`,
+          "content-type":file.type||"application/octet-stream",
+          "x-redown-action":"upload-local",
+          "x-redown-filename":encodeURIComponent(file.name),
+          "x-redown-folder":prefix,
+          "x-redown-public-base":profile.publicBaseUrl||`${profile.workerUrl}/assets`
+        },
+        body:file
+      });
+      const body=await response.json().catch(()=>({}));
+      if(!response.ok||!body?.ok)throw new Error(body?.error||`Upload failed (${response.status})`);
+      completed++;
+      await send({
+        type:"recordLocalTransfer",
+        ok:true,
+        profileId:profile.id,
+        profileName:profile.name,
+        category:categoryFromPrefix(prefix),
+        location:body.publicUrl
+      });
+      status.className="status ok";
+      status.textContent=`Uploaded ${completed}/${files.length} · ${body.publicUrl}`;
+    }catch(error){
+      await send({
+        type:"recordLocalTransfer",
+        ok:false,
+        profileId:profile.id,
+        profileName:profile.name,
+        category:categoryFromPrefix(prefix),
+        error:error?.message||String(error)
+      });
+      status.className="status bad";
+      status.textContent=`Stopped on ${file.name}: ${error?.message||String(error)}`;
+      await renderHistory();
+      return;
+    }
+  }
+  await renderHistory();
+  $("workspace-prefix").value=prefix;
+  await browseWorkspace();
+}
+function objectContentType(obj,key){
+  const explicit=String(obj?.httpMetadata?.contentType||obj?.contentType||"").toLowerCase();
+  if(explicit)return explicit;
+  const ext=String(key).split(".").pop().toLowerCase();
+  return ({
+    jpg:"image/jpeg",jpeg:"image/jpeg",png:"image/png",webp:"image/webp",gif:"image/gif",avif:"image/avif",svg:"image/svg+xml",
+    mp4:"video/mp4",webm:"video/webm",mov:"video/quicktime",mp3:"audio/mpeg",ogg:"audio/ogg",wav:"audio/wav",
+    glb:"model/gltf-binary",gltf:"model/gltf+json",pdf:"application/pdf",
+    txt:"text/plain",md:"text/markdown",markdown:"text/markdown",json:"application/json",csv:"text/csv",
+    xml:"application/xml",html:"text/html",htm:"text/html",js:"text/javascript",mjs:"text/javascript",
+    ts:"text/typescript",tsx:"text/typescript",jsx:"text/javascript",css:"text/css",yaml:"text/yaml",yml:"text/yaml",
+    py:"text/x-python",rs:"text/plain",go:"text/plain",java:"text/plain",c:"text/plain",cpp:"text/plain",h:"text/plain",
+    sh:"text/plain",bat:"text/plain",ps1:"text/plain",log:"text/plain"
+  })[ext]||"application/octet-stream";
+}
+function isTextPreview(type,key){
+  if(type.startsWith("text/"))return true;
+  if(["application/json","application/xml","application/javascript","application/x-javascript"].includes(type))return true;
+  const ext=String(key).split(".").pop().toLowerCase();
+  return ["txt","md","markdown","json","csv","xml","html","htm","js","mjs","ts","tsx","jsx","css","yaml","yml","py","rs","go","java","c","cpp","h","sh","bat","ps1","log"].includes(ext);
+}
+function appendDetails(root,obj,key,url,type){
+  const details=document.createElement("div");
+  details.className="preview-details";
+  const entries=[
+    ["Type",type||"application/octet-stream"],
+    ["Size",formatBytes(obj?.size)],
+    ["Uploaded",obj?.uploaded||obj?.uploadedAt||obj?.created||"—"],
+    ["Key",key]
+  ];
+  for(const [label,value] of entries){
+    const a=document.createElement("div");a.textContent=label;
+    const b=document.createElement("div");b.textContent=String(value??"—");
+    details.append(a,b);
+  }
+  root.append(details);
+  const link=document.createElement("a");
+  link.className="preview-url";
+  link.href=url;
+  link.target="_blank";
+  link.rel="noopener";
+  link.textContent=url;
+  root.append(link);
+}
+async function showWorkspacePreview(obj,row){
+  const root=$("workspace-preview");
+  root.replaceChildren();
+  document.querySelectorAll("#workspace-objects .object.active").forEach(el=>el.classList.remove("active"));
+  row?.classList.add("active");
+  const key=obj.key||obj.name||String(obj);
+  const url=publicObjectUrl(workspaceTarget,key);
+  const type=objectContentType(obj,key);
+
+  const title=document.createElement("div");
+  title.className="preview-title";
+  title.textContent=key;
+  root.append(title);
+
+  const media=document.createElement("div");
+  media.className="preview-media";
+
+  if(type.startsWith("image/")){
+    const img=document.createElement("img");
+    img.src=url;img.alt=key;
+    media.append(img);
+    root.append(media);
+  }else if(type.startsWith("video/")){
+    const video=document.createElement("video");
+    video.src=url;video.controls=true;video.preload="metadata";
+    media.append(video);
+    root.append(media);
+  }else if(type.startsWith("audio/")){
+    const audio=document.createElement("audio");
+    audio.src=url;audio.controls=true;audio.preload="metadata";
+    media.append(audio);
+    root.append(media);
+  }else if(type==="application/pdf"||key.toLowerCase().endsWith(".pdf")){
+    const frame=document.createElement("iframe");
+    frame.src=url;
+    frame.title=`PDF preview: ${key}`;
+    media.append(frame);
+    root.append(media);
+  }else if(isTextPreview(type,key)){
+    const pre=document.createElement("pre");
+    pre.className="text-preview";
+    pre.textContent="Loading text preview…";
+    root.append(pre);
+    try{
+      const response=await fetch(url,{headers:{range:"bytes=0-524287"}});
+      if(!response.ok&&!([200,206].includes(response.status)))throw new Error(`HTTP ${response.status}`);
+      const text=await response.text();
+      pre.textContent=text+(text.length>=524288?"\n\n[Preview truncated at 512 KB]":"");
+    }catch(error){
+      pre.textContent=`Could not load text preview: ${error?.message||String(error)}`;
+    }
+  }else{
+    const note=document.createElement("div");
+    note.className="meta";
+    note.textContent=type.includes("gltf")
+      ?"3D asset detected. Metadata and public URL are ready; interactive 3D preview can be added next."
+      :"No inline renderer for this file type yet. Details and public URL are available below.";
+    media.append(note);
+    root.append(media);
+  }
+
+  appendDetails(root,obj,key,url,type);
+}
+async function browseWorkspace(){
+  if(!workspaceTarget)return;
+  const root=$("workspace-objects");
+  root.replaceChildren();
+  const prefix=$("workspace-prefix").value.trim();
+  const result=await send({
+    type:"cfObjects",
+    accountId:workspaceTarget.accountId,
+    bucketName:workspaceTarget.bucketName,
+    prefix
+  });
+  if(!result?.ok){
+    const e=document.createElement("div");e.className="object";e.textContent=result?.error||"Could not browse bucket";root.append(e);return;
+  }
+  workspaceObjects=(result.objects||[]).filter(obj=>{
+    const key=obj.key||obj.name||"";
+    return key&&!key.endsWith("/.redown");
+  });
+  if(!workspaceObjects.length){
+    const e=document.createElement("div");e.className="object";e.textContent="No objects under this prefix.";root.append(e);
+    $("workspace-preview").replaceChildren(Object.assign(document.createElement("div"),{className:"meta",textContent:"Nothing to preview here yet."}));
+    return;
+  }
+  for(const obj of workspaceObjects.slice(0,300)){
+    const key=obj.key||obj.name||String(obj);
+    const row=document.createElement("div");
+    row.className="object";
+    row.textContent=`${key} · ${formatBytes(obj.size)}`;
+    row.addEventListener("click",()=>showWorkspacePreview(obj,row));
+    root.append(row);
+  }
+}
+function wireWorkspace(){
+  const select=$("local-profile");
+  if(!select)return;
+  select.addEventListener("change",async()=>{
+    workspaceTarget=profiles.find(p=>p.id===select.value)||null;
+    if(workspaceTarget){
+      $("workspace-prefix").value="";
+      await browseWorkspace();
+    }
+  });
+  const drop=$("local-dropzone");
+  const picker=$("local-files");
+  drop.addEventListener("click",()=>picker.click());
+  drop.addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();picker.click();}});
+  picker.addEventListener("change",async()=>{await uploadLocalFiles(picker.files);picker.value="";});
+  for(const eventName of ["dragenter","dragover"]){
+    drop.addEventListener(eventName,e=>{e.preventDefault();drop.classList.add("drag");});
+  }
+  for(const eventName of ["dragleave","drop"]){
+    drop.addEventListener(eventName,e=>{e.preventDefault();drop.classList.remove("drag");});
+  }
+  drop.addEventListener("drop",e=>uploadLocalFiles(e.dataTransfer?.files));
+  $("workspace-browse").addEventListener("click",browseWorkspace);
+  $("workspace-refresh").addEventListener("click",browseWorkspace);
+  $("workspace-prefix").addEventListener("keydown",e=>{if(e.key==="Enter")browseWorkspace();});
 }
 
 async function renderHistory(){
@@ -515,6 +778,9 @@ $("close-browser").addEventListener("click",()=>{$("browser-panel").hidden=true;
   const stored=await chrome.storage.local.get(["profiles","cloudflareAuth"]);
   profiles=stored.profiles||[];
   renderProfiles();
+  wireWorkspace();
+  renderWorkspaceProfiles();
+  if(workspaceTarget)await browseWorkspace();
   await refreshCloudflare();
   await renderHistory();
 })();
