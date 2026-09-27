@@ -142,22 +142,64 @@ export default {
       }
       if (!key || key.includes("..")) return new Response("Invalid asset path", { status: 400 });
 
-      const object = await env.STORAGE.get(key);
-      if (!object) {
+      const head = await env.STORAGE.head(key);
+      if (!head) {
         return new Response("Not found", {
           status: 404,
           headers: { "access-control-allow-origin": "*" }
         });
       }
 
-      const headers = new Headers();
-      object.writeHttpMetadata(headers);
-      headers.set("etag", object.httpEtag);
-      headers.set("access-control-allow-origin", "*");
-      headers.set("access-control-expose-headers", "ETag, Content-Length, Content-Type, Accept-Ranges, Content-Range");
-      headers.set("cache-control", headers.get("cache-control") || "public, max-age=31536000, immutable");
+      const baseHeaders = new Headers();
+      head.writeHttpMetadata(baseHeaders);
+      baseHeaders.set("etag", head.httpEtag);
+      baseHeaders.set("accept-ranges", "bytes");
+      baseHeaders.set("access-control-allow-origin", "*");
+      baseHeaders.set("access-control-expose-headers", "ETag, Content-Length, Content-Type, Accept-Ranges, Content-Range");
+      baseHeaders.set("cache-control", baseHeaders.get("cache-control") || "public, max-age=31536000, immutable");
 
-      return new Response(request.method === "HEAD" ? null : object.body, { headers });
+      if (request.method === "HEAD") {
+        baseHeaders.set("content-length", String(head.size));
+        return new Response(null, { status: 200, headers: baseHeaders });
+      }
+
+      const rangeHeader = request.headers.get("range");
+      if (rangeHeader && rangeHeader.startsWith("bytes=")) {
+        const firstRange = rangeHeader.slice(6).split(",")[0];
+        const parts = firstRange.split("-");
+        let start = parts[0] ? Number(parts[0]) : NaN;
+        let end = parts[1] ? Number(parts[1]) : NaN;
+
+        if (!Number.isFinite(start) && Number.isFinite(end)) {
+          const suffixLength = Math.max(0, Math.floor(end));
+          start = Math.max(0, head.size - suffixLength);
+          end = head.size - 1;
+        } else {
+          start = Math.max(0, Math.floor(start));
+          end = Number.isFinite(end) ? Math.min(head.size - 1, Math.floor(end)) : head.size - 1;
+        }
+
+        if (!Number.isFinite(start) || start >= head.size || end < start) {
+          baseHeaders.set("content-range", \`bytes */\${head.size}\`);
+          return new Response(null, { status: 416, headers: baseHeaders });
+        }
+
+        const length = end - start + 1;
+        const object = await env.STORAGE.get(key, { range: { offset: start, length } });
+        if (!object) return new Response("Not found", { status: 404, headers: baseHeaders });
+        const headers = new Headers(baseHeaders);
+        object.writeHttpMetadata(headers);
+        headers.set("content-range", \`bytes \${start}-\${end}/\${head.size}\`);
+        headers.set("content-length", String(length));
+        return new Response(object.body, { status: 206, headers });
+      }
+
+      const object = await env.STORAGE.get(key);
+      if (!object) return new Response("Not found", { status: 404, headers: baseHeaders });
+      const headers = new Headers(baseHeaders);
+      object.writeHttpMetadata(headers);
+      headers.set("content-length", String(head.size));
+      return new Response(object.body, { status: 200, headers });
     }
 
     if (request.method === "OPTIONS" && requestUrl.pathname.startsWith(assetPrefix)) {
@@ -184,6 +226,73 @@ export default {
       return Response.json({ ok: false, error: "Unauthorized" }, { status: 401 });
     }
     try {
+      if (request.headers.get("x-redown-action") === "upload-local") {
+        const rawFilename = request.headers.get("x-redown-filename") || "upload";
+        let requestedFilename = rawFilename;
+        try { requestedFilename = decodeURIComponent(rawFilename); } catch {}
+        requestedFilename = cleanName(requestedFilename);
+
+        const prefix = cleanPrefix(request.headers.get("x-redown-folder") || "");
+        const contentType = request.headers.get("content-type") || "application/octet-stream";
+        const filename = filenameWithInferredExtension(requestedFilename, contentType);
+        const key = prefix ? \`\${prefix}/\${filename}\` : filename;
+        const encodedKey = key.split("/").map(encodeURIComponent).join("/");
+        const publicPath = \`/assets/\${encodedKey}\`;
+        const publicBaseUrl = safePublicBase(request.headers.get("x-redown-public-base"), requestUrl);
+        const publicUrl = \`\${publicBaseUrl}/\${encodedKey}\`;
+
+        const length = Number(request.headers.get("content-length") || 0);
+        const max = Number(env.MAX_BYTES || 314572800);
+        if (length && length > max) {
+          return Response.json({ ok: false, error: "Local file is larger than this REDOWN profile allows" }, { status: 413 });
+        }
+        if (!request.body) throw new Error("Local upload body is empty");
+
+        const metadata = {
+          httpMetadata: { contentType, cacheControl: "public, max-age=31536000, immutable" },
+          customMetadata: {
+            sourceType: "local-upload",
+            originalFilename: requestedFilename,
+            publicPath,
+            publicUrl,
+            importedBy: "REDOWN",
+            importedAt: new Date().toISOString()
+          }
+        };
+
+        let bytesWritten = 0;
+        if (length > 0) {
+          const fixed = new FixedLengthStream(length);
+          let count = 0;
+          const limiter = new TransformStream({
+            transform(chunk, controller) {
+              count += chunk.byteLength || 0;
+              if (count > max) throw new Error("Local file exceeded size limit");
+              controller.enqueue(chunk);
+            }
+          });
+          const pipePromise = request.body.pipeThrough(limiter).pipeTo(fixed.writable);
+          const putPromise = env.STORAGE.put(key, fixed.readable, metadata);
+          await Promise.all([pipePromise, putPromise]);
+          bytesWritten = count || length;
+        } else {
+          const bytes = new Uint8Array(await request.arrayBuffer());
+          if (bytes.byteLength > max) throw new Error("Local file exceeded size limit");
+          await env.STORAGE.put(key, bytes, metadata);
+          bytesWritten = bytes.byteLength;
+        }
+
+        return Response.json({
+          ok: true,
+          key,
+          filename,
+          publicPath,
+          publicUrl,
+          bytes: bytesWritten,
+          contentType
+        });
+      }
+
       const body = await request.json();
 
       if (body.action === "ensurePrefixes") {
@@ -990,6 +1099,18 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         return sendResponse({ ok:true, ...(await configureAssetDomain(message.accountId,message.bucketName,message.website)) });
       }
       if (message?.type === "cfObjects") return sendResponse({ ok:true, objects:await listObjects(message.accountId,message.bucketName,message.prefix) });
+      if (message?.type === "recordLocalTransfer") {
+        await recordTransfer({
+          ok: message.ok !== false,
+          sourceUrl: "local-file",
+          profileId: message.profileId,
+          profileName: message.profileName,
+          category: message.category || "files",
+          location: message.location,
+          error: message.error
+        });
+        return sendResponse({ ok:true });
+      }
       if (message?.type === "profiles") return sendResponse({ ok:true, profiles:await getProfiles() });
       if (message?.type === "transferHistory") {
         const { transferHistory = [] } = await chrome.storage.local.get("transferHistory");

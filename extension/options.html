@@ -77,8 +77,34 @@
     .mini{padding:8px 9px;border-radius:9px;background:#191126;color:#ddd1ea;border:1px solid var(--line);font-size:12px;white-space:nowrap}
     .mini.danger{background:#241019;color:#ffb0bc;border-color:#4b2130}
     .tree-target:disabled{opacity:.4}
+    .dropzone{margin-top:12px;border:1px dashed #604191;border-radius:16px;padding:26px;text-align:center;background:linear-gradient(180deg,rgba(139,92,246,.07),rgba(255,255,255,.015));transition:.16s ease;cursor:pointer}
+    .dropzone.drag{border-color:var(--purple2);background:rgba(139,92,246,.14);transform:translateY(-1px)}
+    .dropzone strong{display:block;font-size:15px;margin-bottom:4px}
+    .dropzone span{color:var(--muted);font-size:12px}
+    .workspace-grid{display:grid;grid-template-columns:minmax(260px,.9fr) minmax(340px,1.5fr);gap:12px;margin-top:12px}
+    .workspace-grid.expanded{grid-template-columns:1fr}
+    .workspace-grid.expanded .preview{grid-column:1 / -1;min-height:620px}
+    .workspace-grid.expanded .preview-media{min-height:520px}
+    .workspace-grid.expanded .preview-media img,.workspace-grid.expanded .preview-media video{max-height:75vh}
+    .workspace-grid.expanded .preview-media iframe{height:75vh}
+    .workspace-grid.expanded .text-preview{max-height:75vh}
+    .preview-head{display:flex;align-items:center;justify-content:space-between;gap:10px}
+    .object{cursor:pointer}
+    .object:hover,.object.active{background:#181022;color:#fff}
+    .preview{min-height:330px;border:1px solid var(--line);border-radius:12px;background:#0a0710;padding:14px;display:flex;flex-direction:column;gap:12px;overflow:hidden}
+    .preview-media{min-height:210px;display:flex;align-items:center;justify-content:center;border-radius:10px;background:#050308;overflow:hidden}
+    .preview-media img,.preview-media video{display:block;max-width:100%;max-height:430px}
+    .preview-media video{width:100%}
+    .preview-media audio{width:100%}
+    .preview-media iframe{width:100%;height:500px;border:0;background:white}
+    .preview-title{font-weight:850;word-break:break-all}
+    .preview-details{display:grid;grid-template-columns:105px 1fr;gap:7px 10px;font-size:12px}
+    .preview-details div:nth-child(odd){color:var(--muted)}
+    .preview-details div:nth-child(even){word-break:break-all}
+    .preview-url{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:11px;word-break:break-all;color:#cfc6d9}
+    .text-preview{width:100%;max-height:500px;overflow:auto;margin:0;padding:14px;white-space:pre-wrap;word-break:break-word;background:#050308;color:#e8e1ef;border-radius:10px;font:12px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace;text-align:left}
     @media(max-width:900px){.tree-row{grid-template-columns:20px 1fr 80px 1fr}.tree-row .mini{grid-column:auto}}
-    @media(max-width:760px){.grid,.grid.two{grid-template-columns:1fr}}
+    @media(max-width:760px){.grid,.grid.two,.workspace-grid{grid-template-columns:1fr}}
   </style>
 </head>
 <body>
@@ -88,7 +114,7 @@
       <img src="icon.svg" alt="">
       <div><div class="wordmark">REDOWN</div><div class="sub">Remote downloads, without the download.</div></div>
     </div>
-    <div class="pill">Premium utility · v0.5.4</div>
+    <div class="pill">Premium utility · v0.5.5</div>
   </header>
 
   <section class="hero">
@@ -128,6 +154,44 @@
     </div>
     <div id="profiles"></div>
     <div id="profiles-empty" class="empty">No destinations yet. Connect Cloudflare or add GitHub above.</div>
+  </section>
+
+  <section id="local-tools" class="section" hidden>
+    <div class="section-head">
+      <div><h2>Upload from computer</h2><div class="section-note">Choose an R2 bucket and location, then drag files in.</div></div>
+    </div>
+    <div class="card">
+      <div class="grid two">
+        <div><label for="local-profile">Bucket</label><select id="local-profile"></select></div>
+        <div><label for="local-prefix">Location / prefix</label><input id="local-prefix" value="files" placeholder="2d, 3d, videos, files, or any/custom/path"></div>
+      </div>
+      <input id="local-files" type="file" multiple hidden>
+      <div id="local-dropzone" class="dropzone" tabindex="0">
+        <strong>Drop files here</strong>
+        <span>or click to choose files from this computer</span>
+      </div>
+      <div id="local-upload-status" class="status"></div>
+    </div>
+
+    <div class="section-head" style="margin-top:18px">
+      <div><h2>Explore</h2><div class="section-note">Click an object to preview it from its REDOWN URL. Images, video, audio, PDF, and text/code formats preview in place.</div></div>
+      <button id="workspace-refresh" class="ghost">Refresh</button>
+    </div>
+    <div class="card">
+      <div class="grid two">
+        <div><label for="workspace-prefix">Prefix filter</label><input id="workspace-prefix" placeholder="Leave empty for whole bucket"></div>
+        <div style="display:flex;align-items:end"><button id="workspace-browse" class="secondary">Explore bucket</button></div>
+      </div>
+      <div class="workspace-grid">
+        <div id="workspace-objects" class="objects" style="max-height:500px"></div>
+        <div id="workspace-preview" class="preview">
+          <div class="preview-head">
+            <div class="meta">Choose a file on the left to preview it or inspect its details.</div>
+            <button id="preview-expand" class="ghost" type="button">Expand</button>
+          </div>
+        </div>
+      </div>
+    </div>
   </section>
 
   <section class="section">
