@@ -173,7 +173,7 @@ function assetCorsControl(profile){
   wrap.style.gridColumn="1 / -1";
 
   const label=document.createElement("label");
-  label.textContent="Website allowed to load assets";
+  label.textContent="Asset serving domain";
 
   const row=document.createElement("div");
   row.style.display="grid";
@@ -182,46 +182,73 @@ function assetCorsControl(profile){
 
   const input=document.createElement("input");
   input.type="text";
-  input.value=profile.allowedWebsiteOrigin||"";
-  input.placeholder="webrev.online or cdn.website.com";
+  input.value=profile.customAssetDomain||"";
+  input.placeholder="cdn.website.com";
 
   const apply=document.createElement("button");
   apply.type="button";
   apply.className="secondary";
-  apply.textContent="Apply CORS";
+  apply.textContent="Use domain";
 
   const status=document.createElement("div");
   status.className="status";
   status.style.marginTop="7px";
-  status.textContent=profile.allowedWebsiteOrigin
-    ? `Allowed origin: ${profile.allowedWebsiteOrigin}`
-    : "Adds this website to the R2 bucket's allowed CORS origins for 2D, 3D, video, and future asset types.";
 
-  input.addEventListener("input",()=>{
-    profile.allowedWebsiteOrigin=input.value.trim();
-    scheduleSave();
-  });
+  const endpoints=document.createElement("div");
+  endpoints.className="meta";
+  endpoints.style.gridColumn="1 / -1";
+  endpoints.style.marginTop="9px";
+  endpoints.style.wordBreak="break-all";
+
+  function renderEndpoints(){
+    const base=(profile.publicBaseUrl||(`${profile.workerUrl}/assets`)).replace(/\/+$/,"");
+    const folders=profile.folders||{};
+    const lines=[
+      ["Public base",base],
+      ["2D",`${base}/${folders["2d"]||"2d"}/`],
+      ["3D",`${base}/${folders["3d"]||"3d"}/`],
+      ["Videos",`${base}/${folders.videos||"videos"}/`],
+      ["Files",`${base}/${folders.files||"files"}/`]
+    ];
+    endpoints.replaceChildren();
+    for(const [name,url] of lines){
+      const line=document.createElement("div");
+      const strong=document.createElement("strong");
+      strong.textContent=name+": ";
+      const text=document.createElement("span");
+      text.textContent=url;
+      line.append(strong,text);
+      endpoints.append(line);
+    }
+  }
+
+  status.textContent=profile.customAssetDomain
+    ? `Serving through https://${profile.customAssetDomain}`
+    : "Using REDOWN's workers.dev endpoint by default. Add a Cloudflare-hosted domain/subdomain to use it instead.";
 
   apply.addEventListener("click",async()=>{
     if(apply.disabled)return;
     apply.disabled=true;
     const previous=apply.textContent;
-    apply.textContent="Applying…";
+    apply.textContent="Attaching…";
     status.className="status";
-    status.textContent="Updating Cloudflare R2 CORS…";
+    status.textContent="Attaching this hostname to the REDOWN Worker…";
     try{
       const result=await send({
-        type:"cfSetAssetCors",
+        type:"cfSetAssetDomain",
         accountId:profile.accountId,
         bucketName:profile.bucketName,
         website:input.value
       });
-      if(!result?.ok)throw new Error(result?.error||"Could not update bucket CORS");
+      if(!result?.ok)throw new Error(result?.error||"Could not attach asset domain");
+      profile.customAssetDomain=result.hostname;
       profile.allowedWebsiteOrigin=result.origin;
-      input.value=result.origin;
+      profile.publicBaseUrl=result.publicBaseUrl;
+      input.value=result.hostname;
       await saveProfiles();
       status.className="status ok";
-      status.textContent=`${result.origin} can now request assets from this R2 bucket.`;
+      status.textContent=`Assets now serve from ${result.publicBaseUrl}`;
+      renderEndpoints();
     }catch(error){
       status.className="status bad";
       status.textContent=error?.message||String(error);
@@ -232,7 +259,8 @@ function assetCorsControl(profile){
   });
 
   row.append(input,apply);
-  wrap.append(label,row,status);
+  wrap.append(label,row,status,endpoints);
+  renderEndpoints();
   return wrap;
 }
 
@@ -425,7 +453,18 @@ async function browse(){
   if(!result?.ok){const e=document.createElement("div");e.className="object";e.textContent=result?.error||"Could not browse bucket";root.append(e);return;}
   const objects=result.objects||[];
   if(!objects.length){const e=document.createElement("div");e.className="object";e.textContent="No objects under this prefix.";root.append(e);return;}
-  objects.slice(0,200).forEach(obj=>{const e=document.createElement("div");e.className="object";e.textContent=obj.key||obj.name||String(obj);root.append(e);});
+  const base=(browseTarget.publicBaseUrl||(`${browseTarget.workerUrl}/assets`)).replace(/\/+$/,"");
+  objects.slice(0,200).forEach(obj=>{
+    const key=obj.key||obj.name||String(obj);
+    const e=document.createElement("div");
+    e.className="object";
+    if(key && !key.endsWith("/.redown")){
+      e.textContent=`${key}  ·  ${base}/${String(key).split("/").map(encodeURIComponent).join("/")}`;
+    }else{
+      e.textContent=key;
+    }
+    root.append(e);
+  });
 }
 
 $("connect-cloudflare").addEventListener("click",async()=>{
