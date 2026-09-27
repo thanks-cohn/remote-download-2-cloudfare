@@ -447,17 +447,38 @@ async function setProfiles(profiles) {
 }
 async function recordTransfer(entry) {
   const { transferHistory = [] } = await chrome.storage.local.get("transferHistory");
+  const history = Array.isArray(transferHistory) ? transferHistory : [];
+  const now = new Date().toISOString();
+
+  let cleaned = history;
+  if (entry?.ok && entry?.sourceUrl) {
+    const successAt = Date.now();
+    cleaned = history.filter(item => {
+      if (item?.ok) return true;
+      if (item?.sourceUrl !== entry.sourceUrl) return true;
+      if (entry.profileId && item?.profileId && item.profileId !== entry.profileId) return true;
+      const age = Math.abs(successAt - new Date(item?.at || 0).getTime());
+      return !Number.isFinite(age) || age > 5 * 60 * 1000;
+    });
+  }
+
   const next = [{
     id: crypto.randomUUID(),
-    at: new Date().toISOString(),
+    at: now,
     ...entry
-  }, ...(Array.isArray(transferHistory) ? transferHistory : [])].slice(0, 50);
+  }, ...cleaned].slice(0, 50);
   await chrome.storage.local.set({ transferHistory: next });
 }
 async function notify(title, message) {
-  await chrome.notifications.create({
-    type: "basic", iconUrl: "icon.svg", title, message: String(message || "")
-  });
+  try {
+    await chrome.notifications.create({
+      type: "basic", iconUrl: "icon.svg", title, message: String(message || "")
+    });
+  } catch (error) {
+    // Notifications are cosmetic. A Chrome image/icon failure must never mark
+    // an already-completed REDOWN transfer as failed.
+    console.warn("REDOWN notification skipped:", error?.message || String(error));
+  }
 }
 async function cfFetch(path, options = {}) {
   const { cloudflareAuth } = await chrome.storage.local.get("cloudflareAuth");
