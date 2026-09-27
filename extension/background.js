@@ -180,7 +180,7 @@ export default {
         }
 
         if (!Number.isFinite(start) || start >= head.size || end < start) {
-          baseHeaders.set("content-range", `bytes */${head.size}`);
+          baseHeaders.set("content-range", \`bytes */\${head.size}\`);
           return new Response(null, { status: 416, headers: baseHeaders });
         }
 
@@ -189,7 +189,7 @@ export default {
         if (!object) return new Response("Not found", { status: 404, headers: baseHeaders });
         const headers = new Headers(baseHeaders);
         object.writeHttpMetadata(headers);
-        headers.set("content-range", `bytes ${start}-${end}/${head.size}`);
+        headers.set("content-range", \`bytes \${start}-\${end}/\${head.size}\`);
         headers.set("content-length", String(length));
         return new Response(object.body, { status: 206, headers });
       }
@@ -235,11 +235,11 @@ export default {
         const prefix = cleanPrefix(request.headers.get("x-redown-folder") || "");
         const contentType = request.headers.get("content-type") || "application/octet-stream";
         const filename = filenameWithInferredExtension(requestedFilename, contentType);
-        const key = prefix ? `${prefix}/${filename}` : filename;
+        const key = prefix ? \`\${prefix}/\${filename}\` : filename;
         const encodedKey = key.split("/").map(encodeURIComponent).join("/");
-        const publicPath = `/assets/${encodedKey}`;
+        const publicPath = \`/assets/\${encodedKey}\`;
         const publicBaseUrl = safePublicBase(request.headers.get("x-redown-public-base"), requestUrl);
-        const publicUrl = `${publicBaseUrl}/${encodedKey}`;
+        const publicUrl = \`\${publicBaseUrl}/\${encodedKey}\`;
 
         const length = Number(request.headers.get("content-length") || 0);
         const max = Number(env.MAX_BYTES || 314572800);
