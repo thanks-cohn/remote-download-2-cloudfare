@@ -95,7 +95,7 @@ function extensionForContentType(contentType) {
 }
 function filenameWithInferredExtension(filename, contentType) {
   const clean = cleanName(filename);
-  if (/\.[a-z0-9]{1,10}$/i.test(clean)) return clean;
+  if (/\\.[a-z0-9]{1,10}$/i.test(clean)) return clean;
   const ext = extensionForContentType(contentType);
   return ext ? clean + "." + ext : clean;
 }
@@ -106,7 +106,7 @@ function safePublicBase(value, requestUrl) {
   try {
     const url = new URL(raw);
     if (url.protocol !== "https:") return fallback;
-    return url.toString().replace(/\/+$/, "");
+    return url.toString().replace(/\\/+$/, "");
   } catch {
     return fallback;
   }
