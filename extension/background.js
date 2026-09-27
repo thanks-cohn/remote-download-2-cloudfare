@@ -541,6 +541,92 @@ async function provisionCloudflareProfile({ accountId, accountName, bucketName, 
   await setProfiles(profiles);
   return profile;
 }
+function normalizeWebOrigin(value) {
+  const raw = String(value || "").trim();
+  if (!raw) throw new Error("Enter a website such as webrev.online or cdn.website.com");
+  let url;
+  try {
+    url = new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`);
+  } catch {
+    throw new Error("Enter a valid website/domain");
+  }
+  if (url.protocol !== "https:") throw new Error("Production asset websites must use HTTPS");
+  if (url.username || url.password) throw new Error("Website URL cannot contain credentials");
+  if (url.pathname !== "/" || url.search || url.hash) {
+    throw new Error("Enter only the website origin, without a path, query, or fragment");
+  }
+  return url.origin;
+}
+
+async function configureBucketAssetCors(accountId, bucketName, website) {
+  if (!accountId || !bucketName) throw new Error("Missing Cloudflare account or bucket");
+  const origin = normalizeWebOrigin(website);
+  const path = `/accounts/${accountId}/r2/buckets/${encodeURIComponent(bucketName)}/cors`;
+
+  let existingRules = [];
+  const current = await cfFetch(path);
+  if (current.ok) {
+    const body = await current.json().catch(() => ({}));
+    existingRules = Array.isArray(body?.result?.rules) ? body.result.rules : [];
+  } else if (current.status !== 404) {
+    const body = await current.json().catch(() => ({}));
+    throw new Error(body?.errors?.[0]?.message || `Could not read R2 CORS configuration (${current.status})`);
+  }
+
+  const rules = existingRules.map(rule => structuredClone(rule));
+  let matched = false;
+
+  for (const rule of rules) {
+    const origins = Array.isArray(rule?.allowed?.origins) ? rule.allowed.origins : [];
+    if (!origins.includes(origin)) continue;
+    matched = true;
+    rule.allowed ??= {};
+    rule.allowed.origins = origins;
+    rule.allowed.methods = Array.from(new Set([...(rule.allowed.methods || []), "GET", "HEAD"]));
+    rule.allowed.headers = Array.from(new Set([...(rule.allowed.headers || []), "*"]));
+    rule.expose_headers = Array.from(new Set([
+      ...(rule.expose_headers || []),
+      "ETag",
+      "Content-Length",
+      "Content-Type",
+      "Accept-Ranges",
+      "Content-Range"
+    ]));
+    rule.max_age_seconds = Math.max(Number(rule.max_age_seconds) || 0, 3600);
+  }
+
+  if (!matched) {
+    rules.push({
+      allowed: {
+        origins: [origin],
+        methods: ["GET", "HEAD"],
+        headers: ["*"]
+      },
+      expose_headers: ["ETag", "Content-Length", "Content-Type", "Accept-Ranges", "Content-Range"],
+      max_age_seconds: 3600
+    });
+  }
+
+  const updated = await cfJson(path, {
+    method: "PUT",
+    body: JSON.stringify({ rules })
+  });
+
+  const profiles = await getProfiles();
+  const index = profiles.findIndex(p =>
+    p.type === "cloudflare-r2" && p.accountId === accountId && p.bucketName === bucketName
+  );
+  if (index >= 0) {
+    profiles[index] = {
+      ...profiles[index],
+      allowedWebsiteOrigin: origin
+    };
+    await setProfiles(profiles);
+  }
+
+  return { origin, cors: updated };
+}
+
 async function listObjects(accountId, bucketName, prefix = "") {
   const params = new URLSearchParams();
   if (prefix) params.set("prefix", prefix);
@@ -788,6 +874,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       if (message?.type === "cfBuckets") return sendResponse({ ok:true, buckets:await listBuckets(message.accountId) });
       if (message?.type === "cfCreateBucket") return sendResponse({ ok:true, bucket:await createBucket(message.accountId,message.name,message.locationHint) });
       if (message?.type === "cfProvision") return sendResponse({ ok:true, profile:await provisionCloudflareProfile(message) });
+      if (message?.type === "cfSetAssetCors") return sendResponse({ ok:true, ...(await configureBucketAssetCors(message.accountId,message.bucketName,message.website)) });
       if (message?.type === "cfObjects") return sendResponse({ ok:true, objects:await listObjects(message.accountId,message.bucketName,message.prefix) });
       if (message?.type === "profiles") return sendResponse({ ok:true, profiles:await getProfiles() });
       if (message?.type === "transferHistory") {
