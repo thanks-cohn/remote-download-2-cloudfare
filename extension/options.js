@@ -2,7 +2,6 @@ const $=id=>document.getElementById(id);
 let profiles=[];
 let cfAccounts=[];
 let currentAccountId="";
-let browseTarget=null;
 let workspaceTarget=null;
 let workspaceObjects=[];
 let workspacePreviewExpanded=false;
@@ -325,11 +324,6 @@ function renderProfiles(){
     toggle.append(check,document.createTextNode("Show in right-click menu"));
     actions.append(toggle);
 
-    if(p.type==="cloudflare-r2"){
-      const browse=document.createElement("button");browse.className="ghost";browse.textContent="Browse bucket";
-      browse.addEventListener("click",()=>openBrowser(p));
-      actions.append(browse);
-    }
     const up=document.createElement("button");up.className="ghost";up.textContent="Move up";
     up.addEventListener("click",()=>{p.menuOrder=(p.menuOrder??index)-1;renderProfiles();});
     const down=document.createElement("button");down.className="ghost";down.textContent="Move down";
@@ -726,34 +720,6 @@ async function addBucketPreset(bucketName){
   renderProfiles();
   setStatus("cf-status",`${bucketName} is ready. REDOWN verified a real R2 write and prepared its default locations. Right-click a link, image, video, audio item, or GLB link → REDOWN → ${bucketName}.`,"ok");
 }
-async function openBrowser(profile){
-  browseTarget=profile;
-  $("browser-panel").hidden=false;
-  $("browser-title").textContent=`${profile.bucketName} · contents`;
-  $("browse-prefix").value="";
-  $("browser-panel").scrollIntoView({behavior:"smooth"});
-  await browse();
-}
-async function browse(){
-  if(!browseTarget)return;
-  const result=await send({type:"cfObjects",accountId:browseTarget.accountId,bucketName:browseTarget.bucketName,prefix:$("browse-prefix").value.trim()});
-  const root=$("objects");root.replaceChildren();
-  if(!result?.ok){const e=document.createElement("div");e.className="object";e.textContent=result?.error||"Could not browse bucket";root.append(e);return;}
-  const objects=result.objects||[];
-  if(!objects.length){const e=document.createElement("div");e.className="object";e.textContent="No objects under this prefix.";root.append(e);return;}
-  const base=(browseTarget.publicBaseUrl||(`${browseTarget.workerUrl}/assets`)).replace(/\/+$/,"");
-  objects.slice(0,200).forEach(obj=>{
-    const key=obj.key||obj.name||String(obj);
-    const e=document.createElement("div");
-    e.className="object";
-    if(key && !key.endsWith("/.redown")){
-      e.textContent=`${key}  ·  ${base}/${String(key).split("/").map(encodeURIComponent).join("/")}`;
-    }else{
-      e.textContent=key;
-    }
-    root.append(e);
-  });
-}
 
 $("connect-cloudflare").addEventListener("click",async()=>{
   const button=$("connect-cloudflare");
@@ -795,9 +761,7 @@ $("add-github").addEventListener("click",()=>{
   renderProfiles();
   document.querySelector("#profiles .card:last-child")?.scrollIntoView({behavior:"smooth"});
 });
-$("browse-refresh").addEventListener("click",browse);
 $("refresh-history").addEventListener("click",renderHistory);
-$("close-browser").addEventListener("click",()=>{$("browser-panel").hidden=true;browseTarget=null;});
 
 (async()=>{
   const stored=await chrome.storage.local.get(["profiles","cloudflareAuth"]);
