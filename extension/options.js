@@ -243,7 +243,6 @@ function renderProfiles(){
   });
 
   scheduleSave();
-  if($("download-intercept-profile")) renderDownloadIntercept();
 }
 
 function field(labelText,value,onInput,type="text",placeholder=""){
@@ -260,50 +259,6 @@ function selectField(labelText,items,value,onInput){
   items.forEach(([v,t])=>{const o=document.createElement("option");o.value=v;o.textContent=t;o.selected=v===value;select.append(o);});
   select.addEventListener("change",()=>{onInput(select.value);scheduleSave();});
   wrap.append(label,select);return wrap;
-}
-
-async function renderDownloadIntercept(){
-  const stored=await chrome.storage.local.get("downloadIntercept");
-  const settings=stored.downloadIntercept||{};
-  const select=$("download-intercept-profile");
-  const enabled=$("download-intercept-enabled");
-  select.replaceChildren();
-
-  const blank=document.createElement("option");
-  blank.value="";
-  blank.textContent=profiles.length?"Choose a destination…":"Add a REDOWN destination first";
-  select.append(blank);
-
-  for(const p of profiles){
-    const option=document.createElement("option");
-    option.value=p.id;
-    option.textContent=displayName(p);
-    option.selected=p.id===settings.profileId;
-    select.append(option);
-  }
-
-  enabled.checked=Boolean(settings.enabled);
-  enabled.disabled=!profiles.length;
-  select.disabled=!profiles.length;
-
-  if(settings.enabled && settings.profileId && profiles.some(p=>p.id===settings.profileId)){
-    setStatus("download-intercept-status","Chrome downloads are routed through REDOWN when the source is a public HTTPS URL.","ok");
-  }else if(settings.enabled && !profiles.some(p=>p.id===settings.profileId)){
-    setStatus("download-intercept-status","Choose a destination before enabling interception.","bad");
-  }else{
-    setStatus("download-intercept-status","Off. Chrome downloads normally.");
-  }
-}
-async function saveDownloadIntercept(){
-  const enabled=$("download-intercept-enabled").checked;
-  const profileId=$("download-intercept-profile").value;
-  if(enabled && !profileId){
-    $("download-intercept-enabled").checked=false;
-    setStatus("download-intercept-status","Choose a destination first.","bad");
-    return;
-  }
-  await chrome.storage.local.set({downloadIntercept:{enabled,profileId}});
-  await renderDownloadIntercept();
 }
 
 async function renderHistory(){
@@ -446,8 +401,6 @@ $("add-github").addEventListener("click",()=>{
 });
 $("browse-refresh").addEventListener("click",browse);
 $("refresh-history").addEventListener("click",renderHistory);
-$("download-intercept-enabled").addEventListener("change",saveDownloadIntercept);
-$("download-intercept-profile").addEventListener("change",saveDownloadIntercept);
 $("close-browser").addEventListener("click",()=>{$("browser-panel").hidden=true;browseTarget=null;});
 
 (async()=>{
@@ -455,6 +408,5 @@ $("close-browser").addEventListener("click",()=>{$("browser-panel").hidden=true;
   profiles=stored.profiles||[];
   renderProfiles();
   await refreshCloudflare();
-  await renderDownloadIntercept();
   await renderHistory();
 })();
