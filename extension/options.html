@@ -82,6 +82,13 @@
     .dropzone strong{display:block;font-size:15px;margin-bottom:4px}
     .dropzone span{color:var(--muted);font-size:12px}
     .workspace-grid{display:grid;grid-template-columns:minmax(260px,.9fr) minmax(340px,1.5fr);gap:12px;margin-top:12px}
+    .workspace-grid.expanded{grid-template-columns:1fr}
+    .workspace-grid.expanded .preview{grid-column:1 / -1;min-height:620px}
+    .workspace-grid.expanded .preview-media{min-height:520px}
+    .workspace-grid.expanded .preview-media img,.workspace-grid.expanded .preview-media video{max-height:75vh}
+    .workspace-grid.expanded .preview-media iframe{height:75vh}
+    .workspace-grid.expanded .text-preview{max-height:75vh}
+    .preview-head{display:flex;align-items:center;justify-content:space-between;gap:10px}
     .object{cursor:pointer}
     .object:hover,.object.active{background:#181022;color:#fff}
     .preview{min-height:330px;border:1px solid var(--line);border-radius:12px;background:#0a0710;padding:14px;display:flex;flex-direction:column;gap:12px;overflow:hidden}
@@ -178,7 +185,10 @@
       <div class="workspace-grid">
         <div id="workspace-objects" class="objects" style="max-height:500px"></div>
         <div id="workspace-preview" class="preview">
-          <div class="meta">Choose a file on the left to preview it or inspect its details.</div>
+          <div class="preview-head">
+            <div class="meta">Choose a file on the left to preview it or inspect its details.</div>
+            <button id="preview-expand" class="ghost" type="button">Expand</button>
+          </div>
         </div>
       </div>
     </div>
