@@ -56,14 +56,30 @@
     .toggle{display:flex;align-items:center;gap:8px;font-size:12px;color:#d5cce0}
     .toggle input{width:auto}
     .objects{max-height:220px;overflow:auto;margin-top:10px;border:1px solid var(--line);border-radius:12px}
-    .object{padding:9px 11px;border-bottom:1px solid #21172f;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px;color:#cfc6d9}
+    .explorer-toolbar{display:flex;align-items:center;gap:8px;margin-top:12px}
+    .explorer-toolbar button{padding:7px 10px;border-radius:9px}
+    .explorer-breadcrumbs{display:flex;align-items:center;gap:3px;min-width:0;flex:1;overflow:hidden;border:1px solid var(--line);background:#0d0914;border-radius:10px;padding:5px 8px}
+    .crumb{background:transparent;border:0;color:#d8cce4;padding:4px 6px;border-radius:6px;font-weight:650}
+    .crumb:hover{background:#191126}
+    .crumb-sep{color:#746883}
+    .explorer-head,.object{display:grid;grid-template-columns:minmax(160px,1.8fr) 135px 90px 80px;gap:10px;align-items:center}
+    .explorer-head{padding:8px 10px;color:var(--muted);font-size:10px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;border-bottom:1px solid #21172f;position:sticky;top:0;background:#0e0a15;z-index:1}
+    .object{padding:9px 10px;border-bottom:1px solid #21172f;font-size:12px;color:#cfc6d9}
     .object:last-child{border-bottom:0}
-    .downloads-head,.history-row{display:grid;grid-template-columns:120px minmax(170px,.9fr) minmax(220px,1.7fr) 72px;gap:12px;align-items:start}
+    .object-name{display:flex;align-items:center;gap:8px;min-width:0}
+    .object-name-text{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .object-muted{color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .folder-row{font-weight:720}
+    .folder-icon,.file-icon{width:18px;text-align:center;flex:0 0 18px}
+    .downloads-head,.history-row{display:grid;grid-template-columns:120px minmax(170px,.9fr) minmax(220px,1.7fr) 72px 58px;gap:12px;align-items:start}
     .downloads-head{padding:0 8px 8px;color:var(--muted);font-size:10px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;border-bottom:1px solid #21172f}
     .history-row{padding:11px 8px;border-bottom:1px solid #21172f;transition:background .12s ease}
     .history-row:last-child{border-bottom:0}
     .history-row:hover{background:rgba(255,255,255,.018)}
     .download-date,.download-type{font-size:12px;color:#cfc6d9;white-space:nowrap}
+    .download-preview{display:flex;align-items:flex-start;justify-content:center}
+    .preview-jump{width:34px;height:30px;padding:0;border-radius:8px;background:#171020;color:#d9cce5;border:1px solid var(--line);font-size:16px;line-height:1}
+    .preview-jump:hover{border-color:#604191;color:#fff}
     .download-location{min-width:0;color:#bca9d5;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}
     .download-location:hover{color:#e4d8f4;text-decoration:underline}
     .download-name-cell{min-width:0}
@@ -187,7 +203,7 @@
       <div id="local-upload-status" class="status"></div>
     </div>
 
-    <div class="section-head" style="margin-top:18px">
+    <div id="explore-section" class="section-head" style="margin-top:18px">
       <div><h2>Explore</h2><div class="section-note">Click an object to preview it from its REDOWN URL. Images, video, audio, PDF, and text/code formats preview in place.</div></div>
       <button id="workspace-refresh" class="ghost">Refresh</button>
     </div>
@@ -195,6 +211,10 @@
       <div class="grid two">
         <div><label for="workspace-prefix">Prefix filter</label><input id="workspace-prefix" placeholder="Leave empty for whole bucket"></div>
         <div style="display:flex;align-items:end"><button id="workspace-browse" class="secondary">Explore bucket</button></div>
+      </div>
+      <div class="explorer-toolbar">
+        <button id="workspace-up" class="ghost" type="button" title="Up one folder">↑</button>
+        <div id="workspace-breadcrumbs" class="explorer-breadcrumbs" aria-label="Current folder"></div>
       </div>
       <div class="workspace-grid">
         <div id="workspace-objects" class="objects" style="max-height:500px"></div>
