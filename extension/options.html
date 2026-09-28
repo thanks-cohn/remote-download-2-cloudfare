@@ -58,13 +58,27 @@
     .objects{max-height:220px;overflow:auto;margin-top:10px;border:1px solid var(--line);border-radius:12px}
     .object{padding:9px 11px;border-bottom:1px solid #21172f;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px;color:#cfc6d9}
     .object:last-child{border-bottom:0}
-    .history-row{display:grid;grid-template-columns:78px 1fr;gap:10px;padding:10px 0;border-bottom:1px solid #21172f}
+    .downloads-head,.history-row{display:grid;grid-template-columns:120px minmax(170px,.9fr) minmax(220px,1.7fr) 72px;gap:12px;align-items:start}
+    .downloads-head{padding:0 8px 8px;color:var(--muted);font-size:10px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;border-bottom:1px solid #21172f}
+    .history-row{padding:11px 8px;border-bottom:1px solid #21172f;transition:background .12s ease}
     .history-row:last-child{border-bottom:0}
-    .history-status{font-weight:800;font-size:12px}
-    .history-status.ok{color:var(--green)} .history-status.bad{color:var(--red)}
-    .history-main{min-width:0}
-    .history-title{font-weight:750;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-    .history-meta{font-size:11px;color:var(--muted);margin-top:2px;word-break:break-word}
+    .history-row:hover{background:rgba(255,255,255,.018)}
+    .download-date,.download-type{font-size:12px;color:#cfc6d9;white-space:nowrap}
+    .download-location{min-width:0;color:#bca9d5;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}
+    .download-location:hover{color:#e4d8f4;text-decoration:underline}
+    .download-name-cell{min-width:0}
+    .download-name{display:inline;max-width:100%;font-weight:780;cursor:pointer;white-space:nowrap}
+    .download-name.expanded{display:block;white-space:normal;overflow-wrap:anywhere;word-break:break-word;line-height:1.45}
+    .download-name-input{width:100%;padding:6px 8px;border-radius:8px}
+    .new-sticker{display:inline-block;margin-left:7px;padding:2px 6px;border:1px solid rgba(114,221,176,.55);border-radius:999px;background:rgba(114,221,176,.12);color:var(--green);font-size:9px;font-weight:900;letter-spacing:.06em;vertical-align:1px}
+    .download-sub{font-size:10px;color:var(--muted);margin-top:3px;overflow-wrap:anywhere}
+    .errors-toggle{width:100%;margin-top:10px;text-align:left;background:#120b19;color:#d9cce5;border:1px solid var(--line);padding:10px 12px}
+    .errors-list{border-top:1px solid #21172f;margin-top:8px}
+    .error-row{display:grid;grid-template-columns:120px 1fr;gap:12px;padding:10px 8px;border-bottom:1px solid #21172f}
+    .error-copy{min-width:0}
+    .error-title{color:var(--red);font-weight:800;overflow-wrap:anywhere}
+    .error-meta{font-size:11px;color:var(--muted);margin-top:3px;overflow-wrap:anywhere}
+    @media(max-width:760px){.downloads-head{display:none}.history-row{grid-template-columns:92px 1fr}.download-location,.download-type{grid-column:2}.download-name-cell{grid-column:2}.error-row{grid-template-columns:92px 1fr}}
     .tree-editor{margin-top:16px;border-top:1px solid var(--line);padding-top:15px}
     .tree-heading{display:flex;align-items:center;justify-content:space-between;gap:12px}
     .tree-note{font-size:12px;color:var(--muted);margin:10px 0 12px;padding:9px 11px;border-radius:10px;background:#0d0914;border:1px solid #21172f}
@@ -196,7 +210,7 @@
 
   <section class="section">
     <div class="section-head">
-      <div><h2>Recent transfers</h2><div class="section-note">REDOWN keeps the last 50 attempts so failures are visible instead of silent.</div></div>
+      <div><h2>Downloads</h2><div class="section-note">Successful downloads first. Newest is on top; errors stay available below.</div></div>
       <button id="refresh-history" class="ghost">Refresh</button>
     </div>
     <div id="history" class="card"></div>
