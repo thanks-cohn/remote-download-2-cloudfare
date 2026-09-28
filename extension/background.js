@@ -665,10 +665,7 @@ async function connectCloudflare() {
   });
   const user = userRes.ok ? await userRes.json().catch(() => null) : null;
 
-  const cloudflareAuth = await storeCloudflareToken(token, { user });
-  if (user && cloudflareAuth.user !== user) {
-    await chrome.storage.local.set({ cloudflareAuth: { ...cloudflareAuth, user } });
-  }
+  await storeCloudflareToken(token, { user });
 
   const accounts = Array.isArray(verifyBody.result)
     ? verifyBody.result.map(x => ({ id: x.id, name: x.name }))
