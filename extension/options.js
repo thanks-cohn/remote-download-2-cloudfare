@@ -5,6 +5,8 @@ let currentAccountId="";
 let workspaceTarget=null;
 let workspaceObjects=[];
 let workspacePreviewExpanded=false;
+let workspaceSelectedKey="";
+let workspacePendingPreviewKey="";
 
 function uid(){return crypto.randomUUID();}
 function setStatus(id,msg,kind=""){const el=$(id);el.textContent=msg||"";el.className="status"+(kind?" "+kind:"");}
@@ -474,6 +476,39 @@ function isTextPreview(type,key){
 function appendDetails(root,obj,key,url,type){
   const details=document.createElement("div");
   details.className="preview-details";
+
+  const nameLabel=document.createElement("div");
+  nameLabel.textContent="Name";
+  const nameWrap=document.createElement("div");
+  const nameInput=document.createElement("input");
+  nameInput.className="download-name-input";
+  const filename=String(key).split("/").pop()||String(key);
+  nameInput.value=filename;
+  nameInput.title="Rename this R2 object";
+  nameWrap.append(nameInput);
+  const saveName=async()=>{
+    const next=nameInput.value.trim();
+    if(!next||next===filename)return;
+    nameInput.disabled=true;
+    try{
+      const result=await send({type:"renameWorkspaceObject",profileId:workspaceTarget?.id,key,newFilename:next});
+      if(!result?.ok)throw new Error(result?.error||"Rename failed");
+      workspacePendingPreviewKey=result.key;
+      await browseWorkspace();
+    }catch(error){
+      nameInput.disabled=false;
+      nameInput.value=filename;
+      nameInput.title=error?.message||String(error);
+      nameInput.focus();
+    }
+  };
+  nameInput.addEventListener("keydown",e=>{
+    if(e.key==="Enter"){e.preventDefault();saveName();}
+    if(e.key==="Escape"){nameInput.value=filename;nameInput.blur();}
+  });
+  nameInput.addEventListener("blur",saveName);
+  details.append(nameLabel,nameWrap);
+
   const entries=[
     ["Type",type||"application/octet-stream"],
     ["Size",formatBytes(obj?.size)],
@@ -500,6 +535,7 @@ async function showWorkspacePreview(obj,row){
   document.querySelectorAll("#workspace-objects .object.active").forEach(el=>el.classList.remove("active"));
   row?.classList.add("active");
   const key=obj.key||obj.name||String(obj);
+  workspaceSelectedKey=key;
   const url=publicObjectUrl(workspaceTarget,key);
   const type=objectContentType(obj,key);
 
@@ -574,11 +610,72 @@ function setWorkspacePreviewExpanded(expanded){
   if(button)button.textContent=workspacePreviewExpanded?"Collapse":"Expand";
 }
 
+function renderWorkspaceBreadcrumbs(prefix){
+  const root=$("workspace-breadcrumbs");
+  if(!root)return;
+  root.replaceChildren();
+  const parts=String(prefix||"").split("/").filter(Boolean);
+  const all=document.createElement("button");
+  all.type="button";all.className="crumb";all.textContent=workspaceTarget?.bucketName||"R2";
+  all.addEventListener("click",()=>navigateWorkspacePrefix(""));
+  root.append(all);
+  let built="";
+  for(const part of parts){
+    const sep=document.createElement("span");sep.className="crumb-sep";sep.textContent="›";root.append(sep);
+    built=built?built+"/"+part:part;
+    const target=built;
+    const crumb=document.createElement("button");
+    crumb.type="button";crumb.className="crumb";crumb.textContent=part;
+    crumb.addEventListener("click",()=>navigateWorkspacePrefix(target));
+    root.append(crumb);
+  }
+}
+async function navigateWorkspacePrefix(prefix){
+  $("workspace-prefix").value=prefix;
+  workspaceSelectedKey="";
+  workspacePendingPreviewKey="";
+  await browseWorkspace();
+}
+function workspaceParent(prefix){
+  const parts=String(prefix||"").split("/").filter(Boolean);
+  parts.pop();
+  return parts.join("/");
+}
+function workspaceImmediateEntries(objects,prefix){
+  const normalized=String(prefix||"").replace(/^\/+|\/+$/g,"");
+  const base=normalized?normalized+"/":"";
+  const folders=new Set();
+  const files=[];
+  for(const obj of objects){
+    const key=obj.key||obj.name||"";
+    if(!key.startsWith(base))continue;
+    const rest=key.slice(base.length);
+    if(!rest||rest===".redown")continue;
+    const slash=rest.indexOf("/");
+    if(slash>=0){
+      folders.add(rest.slice(0,slash));
+    }else{
+      files.push(obj);
+    }
+  }
+  return {
+    folders:Array.from(folders).sort((a,b)=>a.localeCompare(b,undefined,{numeric:true,sensitivity:"base"})),
+    files:files.sort((a,b)=>String(a.key||a.name||"").localeCompare(String(b.key||b.name||""),undefined,{numeric:true,sensitivity:"base"}))
+  };
+}
+function workspaceDate(obj){
+  const raw=obj?.uploaded||obj?.uploadedAt||obj?.created;
+  if(!raw)return "—";
+  const d=new Date(raw);
+  return Number.isNaN(d.getTime())?"—":d.toLocaleString([],{year:"numeric",month:"short",day:"numeric",hour:"numeric",minute:"2-digit"});
+}
 async function browseWorkspace(){
   if(!workspaceTarget)return;
   const root=$("workspace-objects");
   root.replaceChildren();
-  const prefix=$("workspace-prefix").value.trim();
+  const prefix=$("workspace-prefix").value.trim().replace(/^\/+|\/+$/g,"");
+  $("workspace-prefix").value=prefix;
+  renderWorkspaceBreadcrumbs(prefix);
   const result=await send({
     type:"cfObjects",
     accountId:workspaceTarget.accountId,
@@ -592,24 +689,63 @@ async function browseWorkspace(){
     const key=obj.key||obj.name||"";
     return key&&!key.endsWith("/.redown");
   });
-  if(!workspaceObjects.length){
-    const e=document.createElement("div");e.className="object";e.textContent="No objects under this prefix.";root.append(e);
-    const preview=$("workspace-preview");
-    preview.replaceChildren();
-    const head=document.createElement("div");head.className="preview-head";
-    const note=document.createElement("div");note.className="meta";note.textContent="Nothing to preview here yet.";
-    const expand=document.createElement("button");expand.className="ghost";expand.type="button";expand.textContent=workspacePreviewExpanded?"Collapse":"Expand";
-    expand.addEventListener("click",()=>setWorkspacePreviewExpanded(!workspacePreviewExpanded));
-    head.append(note,expand);preview.append(head);
+  const entries=workspaceImmediateEntries(workspaceObjects,prefix);
+
+  const header=document.createElement("div");
+  header.className="explorer-head";
+  ["Name","Date modified","Type","Size"].forEach(label=>{const x=document.createElement("div");x.textContent=label;header.append(x);});
+  root.append(header);
+
+  if(!entries.folders.length&&!entries.files.length){
+    const e=document.createElement("div");e.className="object";e.style.gridTemplateColumns="1fr";e.textContent="This folder is empty.";root.append(e);
     return;
   }
-  for(const obj of workspaceObjects.slice(0,300)){
+
+  for(const folder of entries.folders){
+    const row=document.createElement("div");
+    row.className="object folder-row";
+    const name=document.createElement("div");name.className="object-name";
+    const icon=document.createElement("span");icon.className="folder-icon";icon.textContent="📁";
+    const text=document.createElement("span");text.className="object-name-text";text.textContent=folder;
+    name.append(icon,text);
+    const date=document.createElement("div");date.className="object-muted";date.textContent="";
+    const type=document.createElement("div");type.className="object-muted";type.textContent="File folder";
+    const size=document.createElement("div");size.className="object-muted";size.textContent="";
+    row.append(name,date,type,size);
+    const target=prefix?prefix+"/"+folder:folder;
+    row.addEventListener("dblclick",()=>navigateWorkspacePrefix(target));
+    row.addEventListener("keydown",e=>{if(e.key==="Enter")navigateWorkspacePrefix(target);});
+    row.tabIndex=0;
+    root.append(row);
+  }
+
+  let pendingRow=null,pendingObj=null;
+  for(const obj of entries.files.slice(0,300)){
     const key=obj.key||obj.name||String(obj);
+    const filename=key.split("/").pop()||key;
+    const type=objectContentType(obj,key);
     const row=document.createElement("div");
     row.className="object";
-    row.textContent=`${key} · ${formatBytes(obj.size)}`;
+    const name=document.createElement("div");name.className="object-name";
+    const icon=document.createElement("span");icon.className="file-icon";icon.textContent=type.startsWith("image/")?"🖼️":"📄";
+    const text=document.createElement("span");text.className="object-name-text";text.textContent=filename;text.title=filename;
+    name.append(icon,text);
+    const date=document.createElement("div");date.className="object-muted";date.textContent=workspaceDate(obj);
+    const typeCell=document.createElement("div");typeCell.className="object-muted";typeCell.textContent=(filename.includes(".")?filename.split(".").pop().toUpperCase():"File");
+    const size=document.createElement("div");size.className="object-muted";size.textContent=formatBytes(obj.size);
+    row.append(name,date,typeCell,size);
     row.addEventListener("click",()=>showWorkspacePreview(obj,row));
+    row.addEventListener("dblclick",()=>showWorkspacePreview(obj,row));
+    row.tabIndex=0;
+    row.addEventListener("keydown",e=>{if(e.key==="Enter")showWorkspacePreview(obj,row);});
+    if(key===workspaceSelectedKey)row.classList.add("active");
+    if(key===workspacePendingPreviewKey){pendingRow=row;pendingObj=obj;}
     root.append(row);
+  }
+  if(pendingObj){
+    workspacePendingPreviewKey="";
+    await showWorkspacePreview(pendingObj,pendingRow);
+    pendingRow.scrollIntoView({block:"nearest"});
   }
 }
 function wireWorkspace(){
@@ -636,6 +772,7 @@ function wireWorkspace(){
   drop.addEventListener("drop",e=>uploadLocalFiles(e.dataTransfer?.files));
   $("workspace-browse").addEventListener("click",browseWorkspace);
   $("workspace-refresh").addEventListener("click",browseWorkspace);
+  $("workspace-up")?.addEventListener("click",()=>navigateWorkspacePrefix(workspaceParent($("workspace-prefix").value)));
   $("workspace-prefix").addEventListener("keydown",e=>{if(e.key==="Enter")browseWorkspace();});
   $("preview-expand")?.addEventListener("click",()=>setWorkspacePreviewExpanded(!workspacePreviewExpanded));
 }
@@ -702,7 +839,7 @@ function formatTransferDate(value){
   if(diff===1)return `Yesterday ${time}`;
   return `${date.toLocaleDateString([],{month:"short",day:"numeric"})} ${time}`;
 }
-async function openTransferLocation(item,parts){
+async function openTransferLocation(item,parts,{preview=false}={}){
   if(parts?.profile?.type!=="cloudflare-r2"||!parts.key)return;
   const folder=parts.key.split("/").slice(0,-1).join("/");
   const select=$("local-profile");
@@ -711,8 +848,10 @@ async function openTransferLocation(item,parts){
     workspaceTarget=parts.profile;
   }
   $("workspace-prefix").value=folder;
+  workspacePendingPreviewKey=preview?parts.key:"";
+  workspaceSelectedKey=preview?parts.key:"";
   await browseWorkspace();
-  $("local-tools")?.scrollIntoView({behavior:"smooth",block:"start"});
+  $("explore-section")?.scrollIntoView({behavior:"smooth",block:"start"});
 }
 async function beginRename(item,parts,nameEl,cell){
   if(parts?.profile?.type!=="cloudflare-r2")return;
@@ -772,7 +911,7 @@ async function renderHistory({markSeen=true}={}){
 
   const head=document.createElement("div");
   head.className="downloads-head";
-  ["Date","Location","File name","Type"].forEach(label=>{const el=document.createElement("div");el.textContent=label;head.append(el);});
+  ["Date","Location","File name","Type","Preview"].forEach(label=>{const el=document.createElement("div");el.textContent=label;head.append(el);});
   root.append(head);
 
   const seenAt=seenState.downloadsSeenAt?new Date(seenState.downloadsSeenAt).getTime():0;
@@ -813,7 +952,17 @@ async function renderHistory({markSeen=true}={}){
     }
 
     const type=document.createElement("div");type.className="download-type";type.textContent=parts.type;
-    row.append(date,location,nameCell,type);
+    const previewCell=document.createElement("div");previewCell.className="download-preview";
+    if(parts.profile?.type==="cloudflare-r2"&&parts.key){
+      const previewButton=document.createElement("button");
+      previewButton.type="button";
+      previewButton.className="preview-jump";
+      previewButton.textContent="🖼";
+      previewButton.title="Show this file in Explore and open its preview";
+      previewButton.addEventListener("click",()=>openTransferLocation(item,parts,{preview:true}));
+      previewCell.append(previewButton);
+    }
+    row.append(date,location,nameCell,type,previewCell);
     root.append(row);
   }
 
