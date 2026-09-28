@@ -67,7 +67,9 @@
     .object{padding:9px 10px;border-bottom:1px solid #21172f;font-size:12px;color:#cfc6d9}
     .object:last-child{border-bottom:0}
     .object-name{display:flex;align-items:center;gap:8px;min-width:0}
-    .object-name-text{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .object-name-text{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:text}
+    .object-name-text:hover{text-decoration:underline;text-decoration-style:dotted}
+    .object-name-editor{width:100%;padding:5px 7px;border-radius:7px;font-size:12px}
     .object-muted{color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
     .folder-row{font-weight:720}
     .folder-icon,.file-icon{width:18px;text-align:center;flex:0 0 18px}
@@ -208,10 +210,16 @@
       <button id="workspace-refresh" class="ghost">Refresh</button>
     </div>
     <div class="card">
-      <div class="grid two">
-        <div><label for="workspace-prefix">Prefix filter</label><input id="workspace-prefix" placeholder="Leave empty for whole bucket"></div>
-        <div style="display:flex;align-items:end"><button id="workspace-browse" class="secondary">Explore bucket</button></div>
+      <div class="grid">
+        <div><label for="workspace-account">Account</label><select id="workspace-account"></select></div>
+        <div>
+          <label for="workspace-bucket">Bucket</label>
+          <input id="workspace-bucket" list="workspace-bucket-suggestions" placeholder="Choose or type any bucket">
+          <datalist id="workspace-bucket-suggestions"></datalist>
+        </div>
+        <div><label for="workspace-prefix">Location / prefix</label><input id="workspace-prefix" placeholder="Leave empty for whole bucket"></div>
       </div>
+      <div class="row-actions"><button id="workspace-browse" class="secondary">Explore bucket</button></div>
       <div class="explorer-toolbar">
         <button id="workspace-up" class="ghost" type="button" title="Up one folder">↑</button>
         <div id="workspace-breadcrumbs" class="explorer-breadcrumbs" aria-label="Current folder"></div>
