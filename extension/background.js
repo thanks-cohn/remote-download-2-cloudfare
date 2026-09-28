@@ -1009,6 +1009,18 @@ async function renameCloudflareTransfer(profile, location, newFilename) {
   if (!response.ok || !body?.ok) throw new Error(body?.error || `Rename failed (${response.status})`);
   return body;
 }
+async function renameWorkspaceObject(profileId, key, newFilename) {
+  const profiles = await getProfiles();
+  const profile = profiles.find(p => p.id === profileId);
+  if (!profile || profile.type !== "cloudflare-r2") throw new Error("Cloudflare R2 destination not found");
+  const location = publicAssetUrl(profile, key);
+  const renamed = await renameCloudflareTransfer(profile, location, newFilename);
+  return {
+    key: renamed.key,
+    filename: renamed.filename,
+    publicUrl: renamed.publicUrl || publicAssetUrl(profile, renamed.key)
+  };
+}
 async function renameTransferHistoryItem(id, newFilename) {
   const { transferHistory = [] } = await chrome.storage.local.get("transferHistory");
   const history = Array.isArray(transferHistory) ? transferHistory : [];
@@ -1286,6 +1298,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       }
       if (message?.type === "renameTransfer") {
         return sendResponse({ ok:true, item:await renameTransferHistoryItem(message.id, message.newFilename) });
+      }
+      if (message?.type === "renameWorkspaceObject") {
+        return sendResponse({ ok:true, ...(await renameWorkspaceObject(message.profileId, message.key, message.newFilename)) });
       }
       throw new Error("Unknown request");
     } catch (error) {
