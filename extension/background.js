@@ -295,6 +295,41 @@ export default {
 
       const body = await request.json();
 
+      if (body.action === "renameObject") {
+        const oldKey = cleanPrefix(body.oldKey);
+        if (!oldKey) throw new Error("Missing object key");
+        const oldParts = oldKey.split("/");
+        const oldFilename = oldParts.pop();
+        const parent = oldParts.join("/");
+        const newFilename = cleanName(body.newFilename || "");
+        const newKey = parent ? `${parent}/${newFilename}` : newFilename;
+        if (newKey === oldKey) {
+          return Response.json({ ok: true, key: oldKey, filename: oldFilename });
+        }
+        if (await env.STORAGE.head(newKey)) {
+          return Response.json({ ok: false, error: "A file with that name already exists in this location" }, { status: 409 });
+        }
+        const object = await env.STORAGE.get(oldKey);
+        if (!object) {
+          return Response.json({ ok: false, error: "Original file was not found" }, { status: 404 });
+        }
+        const encodedKey = newKey.split("/").map(encodeURIComponent).join("/");
+        const publicPath = `/assets/${encodedKey}`;
+        const publicBaseUrl = safePublicBase(body.publicBaseUrl, requestUrl);
+        const publicUrl = `${publicBaseUrl}/${encodedKey}`;
+        await env.STORAGE.put(newKey, object.body, {
+          httpMetadata: object.httpMetadata,
+          customMetadata: {
+            ...(object.customMetadata || {}),
+            publicPath,
+            publicUrl,
+            renamedAt: new Date().toISOString()
+          }
+        });
+        await env.STORAGE.delete(oldKey);
+        return Response.json({ ok: true, key: newKey, filename: newFilename, publicPath, publicUrl });
+      }
+
       if (body.action === "ensurePrefixes") {
         const requested = Array.isArray(body.prefixes) ? body.prefixes : [];
         const created = [];
@@ -877,6 +912,53 @@ async function listObjects(accountId, bucketName, prefix = "") {
   );
   return result?.objects || result || [];
 }
+function objectKeyFromLocation(profile, location) {
+  try {
+    const target = new URL(String(location || ""));
+    const base = new URL(String(profile.publicBaseUrl || `${profile.workerUrl}/assets`).replace(/\/+$/, "") + "/");
+    if (target.origin !== base.origin) return "";
+    const basePath = base.pathname.replace(/\/+$/, "") + "/";
+    if (!target.pathname.startsWith(basePath)) return "";
+    return target.pathname.slice(basePath.length).split("/").map(decodeURIComponent).join("/");
+  } catch {
+    return "";
+  }
+}
+async function renameCloudflareTransfer(profile, location, newFilename) {
+  const oldKey = objectKeyFromLocation(profile, location);
+  if (!oldKey) throw new Error("Could not determine the R2 object path for this download");
+  const response = await fetch(profile.workerUrl, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${profile.token || ""}`,
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({
+      action: "renameObject",
+      oldKey,
+      newFilename,
+      publicBaseUrl: profile.publicBaseUrl || `${profile.workerUrl}/assets`
+    })
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok || !body?.ok) throw new Error(body?.error || `Rename failed (${response.status})`);
+  return body;
+}
+async function renameTransferHistoryItem(id, newFilename) {
+  const { transferHistory = [] } = await chrome.storage.local.get("transferHistory");
+  const history = Array.isArray(transferHistory) ? transferHistory : [];
+  const index = history.findIndex(item => item?.id === id);
+  if (index < 0) throw new Error("Download history entry was not found");
+  const item = history[index];
+  if (!item?.ok) throw new Error("Only completed downloads can be renamed");
+  const profiles = await getProfiles();
+  const profile = profiles.find(p => p.id === item.profileId);
+  if (!profile || profile.type !== "cloudflare-r2") throw new Error("Inline rename is currently available for Cloudflare R2 downloads");
+  const renamed = await renameCloudflareTransfer(profile, item.location, newFilename);
+  history[index] = { ...item, location: renamed.publicUrl || publicAssetUrl(profile, renamed.key), renamedAt: new Date().toISOString() };
+  await chrome.storage.local.set({ transferHistory: history });
+  return history[index];
+}
 async function ensureGitHubWorkflow(profile) {
   const repo = String(profile.repository || "").trim();
   const workflow = profile.workflowFile || "redown-ingest.yml";
@@ -1136,6 +1218,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       if (message?.type === "transferHistory") {
         const { transferHistory = [] } = await chrome.storage.local.get("transferHistory");
         return sendResponse({ ok:true, transferHistory });
+      }
+      if (message?.type === "renameTransfer") {
+        return sendResponse({ ok:true, item:await renameTransferHistoryItem(message.id, message.newFilename) });
       }
       throw new Error("Unknown request");
     } catch (error) {
