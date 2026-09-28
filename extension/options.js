@@ -640,28 +640,210 @@ function wireWorkspace(){
   $("preview-expand")?.addEventListener("click",()=>setWorkspacePreviewExpanded(!workspacePreviewExpanded));
 }
 
-async function renderHistory(){
-  const result=await send({type:"transferHistory"});
+function transferKey(profile, location){
+  try{
+    const target=new URL(String(location||""));
+    const base=new URL(String(profile?.publicBaseUrl||`${profile?.workerUrl||""}/assets`).replace(/\/+$/,"")+"/");
+    if(target.origin!==base.origin)return "";
+    const basePath=base.pathname.replace(/\/+$/,"")+"/";
+    if(!target.pathname.startsWith(basePath))return "";
+    return target.pathname.slice(basePath.length).split("/").map(decodeURIComponent).join("/");
+  }catch{return "";}
+}
+function transferDisplayParts(item){
+  let filename="";
+  let parent="";
+  const profile=profiles.find(p=>p.id===item?.profileId);
+  const key=profile?.type==="cloudflare-r2"?transferKey(profile,item?.location):"";
+  if(key){
+    const parts=key.split("/").filter(Boolean);
+    filename=parts.pop()||"file";
+    parent=parts.length?"/"+parts.join("/")+"/":"/";
+  }else{
+    const raw=String(item?.location||"");
+    if(raw.includes(" → ")){
+      const path=raw.split(" → ").pop();
+      const parts=path.split("/").filter(Boolean);
+      filename=parts.pop()||"file";
+      parent=parts.length?parts.join("/")+"/":"";
+    }else{
+      try{
+        const url=new URL(raw);
+        const parts=url.pathname.split("/").filter(Boolean).map(decodeURIComponent);
+        filename=parts.pop()||"file";
+        parent=parts.length?"/"+parts.join("/")+"/":"/";
+      }catch{
+        filename=raw||"Stored";
+      }
+    }
+  }
+  const dot=filename.lastIndexOf(".");
+  const extension=dot>0?filename.slice(dot+1):"";
+  return {profile,key,filename,parent,type:(extension||"FILE").toUpperCase()};
+}
+function compactFilename(filename){
+  const name=String(filename||"");
+  const dot=name.lastIndexOf(".");
+  const hasExt=dot>0&&dot<name.length-1;
+  const stem=hasExt?name.slice(0,dot):name;
+  const ext=hasExt?name.slice(dot):"";
+  if(stem.length<=13)return name;
+  return `${stem.slice(0,5)}...${stem.slice(-5)}${ext}`;
+}
+function formatTransferDate(value){
+  const date=new Date(value);
+  if(Number.isNaN(date.getTime()))return "—";
+  const now=new Date();
+  const today=new Date(now.getFullYear(),now.getMonth(),now.getDate());
+  const day=new Date(date.getFullYear(),date.getMonth(),date.getDate());
+  const diff=Math.round((today-day)/86400000);
+  const time=date.toLocaleTimeString([],{hour:"numeric",minute:"2-digit"});
+  if(diff===0)return `Today ${time}`;
+  if(diff===1)return `Yesterday ${time}`;
+  return `${date.toLocaleDateString([],{month:"short",day:"numeric"})} ${time}`;
+}
+async function openTransferLocation(item,parts){
+  if(parts?.profile?.type!=="cloudflare-r2"||!parts.key)return;
+  const folder=parts.key.split("/").slice(0,-1).join("/");
+  const select=$("local-profile");
+  if(select){
+    select.value=parts.profile.id;
+    workspaceTarget=parts.profile;
+  }
+  $("workspace-prefix").value=folder;
+  await browseWorkspace();
+  $("local-tools")?.scrollIntoView({behavior:"smooth",block:"start"});
+}
+async function beginRename(item,parts,nameEl,cell){
+  if(parts?.profile?.type!=="cloudflare-r2")return;
+  const input=document.createElement("input");
+  input.className="download-name-input";
+  input.value=parts.filename;
+  nameEl.replaceWith(input);
+  input.focus();
+  const dot=parts.filename.lastIndexOf(".");
+  input.setSelectionRange(0,dot>0?dot:parts.filename.length);
+  let finished=false;
+  const finish=async(save)=>{
+    if(finished)return;
+    finished=true;
+    if(!save)return renderHistory({markSeen:false});
+    const next=input.value.trim();
+    if(!next||next===parts.filename)return renderHistory({markSeen:false});
+    input.disabled=true;
+    try{
+      const result=await send({type:"renameTransfer",id:item.id,newFilename:next});
+      if(!result?.ok)throw new Error(result?.error||"Rename failed");
+      await renderHistory({markSeen:false});
+    }catch(error){
+      input.disabled=false;
+      const note=document.createElement("div");
+      note.className="download-sub";
+      note.style.color="var(--red)";
+      note.textContent=error?.message||String(error);
+      cell.append(note);
+      input.focus();
+      finished=false;
+    }
+  };
+  input.addEventListener("keydown",e=>{
+    if(e.key==="Enter"){e.preventDefault();finish(true);}
+    if(e.key==="Escape"){e.preventDefault();finish(false);}
+  });
+  input.addEventListener("blur",()=>finish(true),{once:true});
+}
+async function renderHistory({markSeen=true}={}){
+  const [result,seenState]=await Promise.all([
+    send({type:"transferHistory"}),
+    chrome.storage.local.get("downloadsSeenAt")
+  ]);
   const root=$("history");
   root.replaceChildren();
-  const items=result?.transferHistory||[];
+  const items=(result?.transferHistory||[]).slice().sort((a,b)=>new Date(b?.at||0)-new Date(a?.at||0));
+  const successes=items.filter(item=>item?.ok);
+  const errors=items.filter(item=>!item?.ok);
   if(!items.length){
     const empty=document.createElement("div");
     empty.className="meta";
-    empty.textContent="No transfers yet. Right-click an image, video, audio item, or direct file link → REDOWN → a preset.";
+    empty.textContent="No downloads yet. Right-click an image, video, audio item, or direct file link → REDOWN → a preset.";
     root.append(empty);
     return;
   }
-  for(const item of items){
+
+  const head=document.createElement("div");
+  head.className="downloads-head";
+  ["Date","Location","File name","Type"].forEach(label=>{const el=document.createElement("div");el.textContent=label;head.append(el);});
+  root.append(head);
+
+  const seenAt=seenState.downloadsSeenAt?new Date(seenState.downloadsSeenAt).getTime():0;
+  let newestSuccessAt=seenAt;
+  for(const item of successes){
+    const parts=transferDisplayParts(item);
+    const itemAt=new Date(item?.at||0).getTime();
+    const isNew=Boolean(seenAt&&Number.isFinite(itemAt)&&itemAt>seenAt);
+    if(Number.isFinite(itemAt))newestSuccessAt=Math.max(newestSuccessAt,itemAt);
+
     const row=document.createElement("div");row.className="history-row";
-    const status=document.createElement("div");status.className="history-status "+(item.ok?"ok":"bad");
-    status.textContent=item.ok?"SENT":"FAILED";
-    const main=document.createElement("div");main.className="history-main";
-    const title=document.createElement("div");title.className="history-title";
-    title.textContent=item.ok?(item.location||"Stored"):(item.error||"Transfer failed");
-    const meta=document.createElement("div");meta.className="history-meta";
-    meta.textContent=[item.profileName,item.category,item.sourceUrl].filter(Boolean).join(" · ");
-    main.append(title,meta);row.append(status,main);root.append(row);
+    const date=document.createElement("div");date.className="download-date";date.textContent=formatTransferDate(item.at);
+    const location=document.createElement("div");location.className="download-location";location.textContent=parts.parent||"—";
+    location.title=parts.parent||"";
+    if(parts.profile?.type==="cloudflare-r2"&&parts.key){
+      location.addEventListener("click",()=>openTransferLocation(item,parts));
+    }else{
+      location.style.cursor="default";
+      location.style.textDecoration="none";
+    }
+
+    const nameCell=document.createElement("div");nameCell.className="download-name-cell";
+    const name=document.createElement("span");name.className="download-name";
+    name.textContent=compactFilename(parts.filename);
+    name.title=parts.filename;
+    name.addEventListener("click",()=>{
+      if(name.classList.contains("expanded")){
+        beginRename(item,parts,name,nameCell);
+        return;
+      }
+      name.classList.add("expanded");
+      name.textContent=parts.filename;
+      row.style.minHeight="auto";
+    });
+    nameCell.append(name);
+    if(isNew){
+      const sticker=document.createElement("span");sticker.className="new-sticker";sticker.textContent="NEW";nameCell.append(sticker);
+    }
+
+    const type=document.createElement("div");type.className="download-type";type.textContent=parts.type;
+    row.append(date,location,nameCell,type);
+    root.append(row);
+  }
+
+  if(!successes.length){
+    const note=document.createElement("div");note.className="meta";note.style.padding="12px 8px";note.textContent="No successful downloads yet.";root.append(note);
+  }
+
+  if(errors.length){
+    const toggle=document.createElement("button");toggle.className="errors-toggle";toggle.type="button";toggle.textContent=`▸ Errors (${errors.length})`;
+    const list=document.createElement("div");list.className="errors-list";list.hidden=true;
+    toggle.addEventListener("click",()=>{
+      list.hidden=!list.hidden;
+      toggle.textContent=`${list.hidden?"▸":"▾"} Errors (${errors.length})`;
+    });
+    for(const item of errors){
+      const row=document.createElement("div");row.className="error-row";
+      const date=document.createElement("div");date.className="download-date";date.textContent=formatTransferDate(item.at);
+      const copy=document.createElement("div");copy.className="error-copy";
+      const title=document.createElement("div");title.className="error-title";title.textContent=item.error||"Transfer failed";
+      const meta=document.createElement("div");meta.className="error-meta";meta.textContent=[item.profileName,item.category,item.sourceUrl].filter(Boolean).join(" · ");
+      copy.append(title,meta);row.append(date,copy);list.append(row);
+    }
+    root.append(toggle,list);
+  }
+
+  if(markSeen&&newestSuccessAt>seenAt){
+    await chrome.storage.local.set({downloadsSeenAt:new Date(newestSuccessAt).toISOString()});
+  }else if(markSeen&&!seenState.downloadsSeenAt&&successes.length){
+    const newest=successes.map(x=>new Date(x.at||0).getTime()).filter(Number.isFinite).reduce((a,b)=>Math.max(a,b),Date.now());
+    await chrome.storage.local.set({downloadsSeenAt:new Date(newest).toISOString()});
   }
 }
 
@@ -761,7 +943,24 @@ $("add-github").addEventListener("click",()=>{
   renderProfiles();
   document.querySelector("#profiles .card:last-child")?.scrollIntoView({behavior:"smooth"});
 });
-$("refresh-history").addEventListener("click",renderHistory);
+$("refresh-history").addEventListener("click",()=>renderHistory({markSeen:true}));
+
+let downloadsDirty=false;
+chrome.storage.onChanged.addListener((changes,area)=>{
+  if(area!=="local"||!changes.transferHistory)return;
+  downloadsDirty=true;
+  if(document.visibilityState==="visible"&&document.hasFocus()){
+    downloadsDirty=false;
+    renderHistory({markSeen:true});
+  }
+});
+async function refreshDownloadsOnAccess(){
+  if(!downloadsDirty)return;
+  downloadsDirty=false;
+  await renderHistory({markSeen:true});
+}
+document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible")refreshDownloadsOnAccess();});
+window.addEventListener("focus",refreshDownloadsOnAccess);
 
 (async()=>{
   const stored=await chrome.storage.local.get(["profiles","cloudflareAuth"]);
