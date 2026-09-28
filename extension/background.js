@@ -515,16 +515,69 @@ async function notify(title, message) {
     console.warn("REDOWN notification skipped:", error?.message || String(error));
   }
 }
-async function cfFetch(path, options = {}) {
+function cloudflareErrorMessage(body, fallback) {
+  return body?.errors?.[0]?.message || body?.error_description || body?.error || fallback;
+}
+async function storeCloudflareToken(token, previous = {}) {
+  const accessToken = token?.access_token;
+  if (!accessToken) throw new Error("Cloudflare did not return an access token");
+  const auth = {
+    ...previous,
+    accessToken,
+    refreshToken: token.refresh_token || previous.refreshToken || null,
+    expiresAt: token.expires_in ? Date.now() + Number(token.expires_in) * 1000 : null
+  };
+  await chrome.storage.local.set({ cloudflareAuth: auth });
+  return auth;
+}
+async function refreshCloudflareToken(currentAuth) {
+  if (!currentAuth?.refreshToken) {
+    throw new Error("Cloudflare authorization expired. Reconnect Cloudflare.");
+  }
+  const res = await fetch(CF_TOKEN_URL, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "refresh_token",
+      client_id: CF_CLIENT_ID,
+      refresh_token: currentAuth.refreshToken
+    })
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok || !body.access_token) {
+    await chrome.storage.local.remove("cloudflareAuth");
+    throw new Error(cloudflareErrorMessage(body, "Cloudflare session expired. Connect Cloudflare again."));
+  }
+  return storeCloudflareToken(body, currentAuth);
+}
+async function getCloudflareAuth() {
   const { cloudflareAuth } = await chrome.storage.local.get("cloudflareAuth");
   if (!cloudflareAuth?.accessToken) throw new Error("Connect Cloudflare first");
-  const headers = new Headers(options.headers || {});
-  headers.set("authorization", `Bearer ${cloudflareAuth.accessToken}`);
-  if (options.body && !(options.body instanceof FormData) && !headers.has("content-type")) {
-    headers.set("content-type", "application/json");
+  if (cloudflareAuth.expiresAt && Date.now() >= cloudflareAuth.expiresAt - 60000) {
+    return refreshCloudflareToken(cloudflareAuth);
   }
-  const res = await fetch(`${CF_API}${path}`, { ...options, headers });
-  if (res.status === 401) throw new Error("Cloudflare authorization expired. Reconnect Cloudflare.");
+  return cloudflareAuth;
+}
+async function cfFetch(path, options = {}) {
+  let cloudflareAuth = await getCloudflareAuth();
+  const makeRequest = async auth => {
+    const headers = new Headers(options.headers || {});
+    headers.set("authorization", `Bearer ${auth.accessToken}`);
+    if (options.body && !(options.body instanceof FormData) && !headers.has("content-type")) {
+      headers.set("content-type", "application/json");
+    }
+    return fetch(`${CF_API}${path}`, { ...options, headers });
+  };
+
+  let res = await makeRequest(cloudflareAuth);
+  if (res.status === 401 && cloudflareAuth.refreshToken) {
+    cloudflareAuth = await refreshCloudflareToken(cloudflareAuth);
+    res = await makeRequest(cloudflareAuth);
+  }
+  if (res.status === 401) {
+    await chrome.storage.local.remove("cloudflareAuth");
+    throw new Error("Cloudflare rejected this authorization. Connect Cloudflare again.");
+  }
   return res;
 }
 async function cfJson(path, options = {}) {
@@ -586,9 +639,25 @@ async function connectCloudflare() {
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body: tokenBody
   });
-  const token = await tokenRes.json();
+  const token = await tokenRes.json().catch(() => ({}));
   if (!tokenRes.ok || !token.access_token) {
-    throw new Error(token.error_description || token.error || "Cloudflare token exchange failed");
+    throw new Error(cloudflareErrorMessage(token, "Cloudflare token exchange failed"));
+  }
+
+  // A fresh install is not considered connected until the newly-issued token
+  // succeeds against the Cloudflare API. This prevents stale/invalid local
+  // state from making onboarding appear successful.
+  const verifyRes = await fetch(`${CF_API}/accounts?per_page=50`, {
+    headers: { authorization: `Bearer ${token.access_token}` }
+  });
+  const verifyBody = await verifyRes.json().catch(() => ({}));
+  if (!verifyRes.ok || verifyBody.success === false) {
+    throw new Error(
+      `Cloudflare authorization was returned, but API verification failed: ${cloudflareErrorMessage(
+        verifyBody,
+        `HTTP ${verifyRes.status}`
+      )}`
+    );
   }
 
   const userRes = await fetch("https://dash.cloudflare.com/oauth2/userinfo", {
@@ -596,16 +665,12 @@ async function connectCloudflare() {
   });
   const user = userRes.ok ? await userRes.json().catch(() => null) : null;
 
-  await chrome.storage.local.set({
-    cloudflareAuth: {
-      accessToken: token.access_token,
-      refreshToken: token.refresh_token || null,
-      expiresAt: token.expires_in ? Date.now() + Number(token.expires_in) * 1000 : null,
-      user
-    }
-  });
+  await storeCloudflareToken(token, { user });
 
-  return { user, accounts: await listCloudflareAccounts() };
+  const accounts = Array.isArray(verifyBody.result)
+    ? verifyBody.result.map(x => ({ id: x.id, name: x.name }))
+    : [];
+  return { user, accounts };
   })();
 
   try {
