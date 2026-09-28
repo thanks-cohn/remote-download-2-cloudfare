@@ -3,6 +3,7 @@ let profiles=[];
 let cfAccounts=[];
 let currentAccountId="";
 let workspaceTarget=null;
+let workspaceBrowseTarget=null;
 let workspaceObjects=[];
 let workspacePreviewExpanded=false;
 let workspaceSelectedKey="";
@@ -367,10 +368,50 @@ function formatBytes(value){
   return `${x>=10||i===0?x.toFixed(0):x.toFixed(1)} ${units[i]}`;
 }
 function publicObjectUrl(profile,key){
-  const base=(profile.publicBaseUrl||(`${profile.workerUrl}/assets`)).replace(/\/+$/,"");
+  const rawBase=profile?.publicBaseUrl||(profile?.workerUrl?`${profile.workerUrl}/assets`:"");
+  if(!rawBase)return "";
+  const base=rawBase.replace(/\/+$/,"");
   return `${base}/${String(key).split("/").map(encodeURIComponent).join("/")}`;
 }
 function r2Profiles(){return profiles.filter(p=>p.type==="cloudflare-r2");}
+function matchingWorkspaceProfile(accountId,bucketName){
+  return r2Profiles().find(p=>p.accountId===accountId&&p.bucketName===bucketName)||null;
+}
+function workspaceBrowseProfile(){
+  const accountId=$("workspace-account")?.value||"";
+  const bucketName=$("workspace-bucket")?.value.trim()||"";
+  const profile=matchingWorkspaceProfile(accountId,bucketName);
+  return profile||{accountId,bucketName,name:bucketName,type:"cloudflare-r2",id:"",workerUrl:"",publicBaseUrl:"",token:""};
+}
+async function refreshWorkspaceBucketSuggestions(){
+  const accountId=$("workspace-account")?.value||"";
+  const list=$("workspace-bucket-suggestions");
+  if(!list)return;
+  list.replaceChildren();
+  if(!accountId)return;
+  const result=await send({type:"cfBuckets",accountId});
+  if(!result?.ok)return;
+  for(const bucket of result.buckets||[]){
+    const option=document.createElement("option");
+    option.value=bucket.name;
+    list.append(option);
+  }
+}
+function renderWorkspaceAccounts(){
+  const select=$("workspace-account");
+  if(!select)return;
+  const previous=select.value;
+  select.replaceChildren();
+  for(const account of cfAccounts){
+    const option=document.createElement("option");
+    option.value=account.id;
+    option.textContent=account.name||account.id;
+    select.append(option);
+  }
+  if(cfAccounts.some(a=>a.id===previous))select.value=previous;
+  else if(currentAccountId&&cfAccounts.some(a=>a.id===currentAccountId))select.value=currentAccountId;
+  else if(cfAccounts[0])select.value=cfAccounts[0].id;
+}
 function renderWorkspaceProfiles(){
   const select=$("local-profile");
   const tools=$("local-tools");
@@ -388,6 +429,9 @@ function renderWorkspaceProfiles(){
   }
   if(r2.some(p=>p.id===previous))select.value=previous;
   workspaceTarget=r2.find(p=>p.id===select.value)||r2[0];
+  if(!$("workspace-bucket")?.value&&workspaceTarget){
+    $("workspace-bucket").value=workspaceTarget.bucketName||"";
+  }
 }
 function categoryFromPrefix(prefix){
   const first=String(prefix||"").split("/").filter(Boolean)[0]?.toLowerCase();
@@ -536,7 +580,7 @@ async function showWorkspacePreview(obj,row){
   row?.classList.add("active");
   const key=obj.key||obj.name||String(obj);
   workspaceSelectedKey=key;
-  const url=publicObjectUrl(workspaceTarget,key);
+  const url=publicObjectUrl(workspaceBrowseTarget,key);
   const type=objectContentType(obj,key);
 
   const head=document.createElement("div");
@@ -557,24 +601,23 @@ async function showWorkspacePreview(obj,row){
 
   if(type.startsWith("image/")){
     const img=document.createElement("img");
-    img.src=url;img.alt=key;
-    media.append(img);
+    if(url){img.src=url;img.alt=key;media.append(img);}
+    else{const note=document.createElement("div");note.className="meta";note.textContent="Preview requires this bucket to be prepared as a REDOWN destination.";media.append(note);}
     root.append(media);
   }else if(type.startsWith("video/")){
     const video=document.createElement("video");
-    video.src=url;video.controls=true;video.preload="metadata";
-    media.append(video);
+    if(url){video.src=url;video.controls=true;video.preload="metadata";media.append(video);}
+    else{const note=document.createElement("div");note.className="meta";note.textContent="Preview requires this bucket to be prepared as a REDOWN destination.";media.append(note);}
     root.append(media);
   }else if(type.startsWith("audio/")){
     const audio=document.createElement("audio");
-    audio.src=url;audio.controls=true;audio.preload="metadata";
-    media.append(audio);
+    if(url){audio.src=url;audio.controls=true;audio.preload="metadata";media.append(audio);}
+    else{const note=document.createElement("div");note.className="meta";note.textContent="Preview requires this bucket to be prepared as a REDOWN destination.";media.append(note);}
     root.append(media);
   }else if(type==="application/pdf"||key.toLowerCase().endsWith(".pdf")){
     const frame=document.createElement("iframe");
-    frame.src=url;
-    frame.title=`PDF preview: ${key}`;
-    media.append(frame);
+    if(url){frame.src=url;frame.title=`PDF preview: ${key}`;media.append(frame);}
+    else{const note=document.createElement("div");note.className="meta";note.textContent="Preview requires this bucket to be prepared as a REDOWN destination.";media.append(note);}
     root.append(media);
   }else if(isTextPreview(type,key)){
     const pre=document.createElement("pre");
@@ -582,6 +625,7 @@ async function showWorkspacePreview(obj,row){
     pre.textContent="Loading text preview…";
     root.append(pre);
     try{
+      if(!url)throw new Error("Preview requires this bucket to be prepared as a REDOWN destination");
       const response=await fetch(url,{headers:{range:"bytes=0-524287"}});
       if(!response.ok&&!([200,206].includes(response.status)))throw new Error(`HTTP ${response.status}`);
       const text=await response.text();
@@ -599,7 +643,7 @@ async function showWorkspacePreview(obj,row){
     root.append(media);
   }
 
-  appendDetails(root,obj,key,url,type);
+  appendDetails(root,obj,key,url||"Preview unavailable for unprepared bucket",type);
 }
 
 function setWorkspacePreviewExpanded(expanded){
@@ -616,7 +660,7 @@ function renderWorkspaceBreadcrumbs(prefix){
   root.replaceChildren();
   const parts=String(prefix||"").split("/").filter(Boolean);
   const all=document.createElement("button");
-  all.type="button";all.className="crumb";all.textContent=workspaceTarget?.bucketName||"R2";
+  all.type="button";all.className="crumb";all.textContent=workspaceBrowseTarget?.bucketName||$("workspace-bucket")?.value||"R2";
   all.addEventListener("click",()=>navigateWorkspacePrefix(""));
   root.append(all);
   let built="";
@@ -675,11 +719,15 @@ async function browseWorkspace(){
   root.replaceChildren();
   const prefix=$("workspace-prefix").value.trim().replace(/^\/+|\/+$/g,"");
   $("workspace-prefix").value=prefix;
+  workspaceBrowseTarget=workspaceBrowseProfile();
+  if(!workspaceBrowseTarget.accountId||!workspaceBrowseTarget.bucketName){
+    const e=document.createElement("div");e.className="object";e.style.gridTemplateColumns="1fr";e.textContent="Choose or type a bucket to explore.";root.append(e);return;
+  }
   renderWorkspaceBreadcrumbs(prefix);
   const result=await send({
     type:"cfObjects",
-    accountId:workspaceTarget.accountId,
-    bucketName:workspaceTarget.bucketName,
+    accountId:workspaceBrowseTarget.accountId,
+    bucketName:workspaceBrowseTarget.bucketName,
     prefix
   });
   if(!result?.ok){
@@ -728,7 +776,39 @@ async function browseWorkspace(){
     row.className="object";
     const name=document.createElement("div");name.className="object-name";
     const icon=document.createElement("span");icon.className="file-icon";icon.textContent=type.startsWith("image/")?"🖼️":"📄";
-    const text=document.createElement("span");text.className="object-name-text";text.textContent=filename;text.title=filename;
+    const text=document.createElement("span");text.className="object-name-text";text.textContent=filename;text.title="Click filename to rename";
+    text.addEventListener("click",e=>{
+      e.stopPropagation();
+      if(!workspaceBrowseTarget?.id){
+        text.title="Prepare this bucket as a REDOWN destination before renaming";
+        return;
+      }
+      const input=document.createElement("input");
+      input.className="object-name-editor";
+      input.value=filename;
+      text.replaceWith(input);
+      input.focus();
+      const dot=filename.lastIndexOf(".");
+      input.setSelectionRange(0,dot>0?dot:filename.length);
+      let done=false;
+      const finish=async(save)=>{
+        if(done)return;done=true;
+        if(!save||!input.value.trim()||input.value.trim()===filename){await browseWorkspace();return;}
+        const result=await send({type:"renameWorkspaceObject",profileId:workspaceBrowseTarget.id,key,newFilename:input.value.trim()});
+        if(!result?.ok){
+          done=false;input.title=result?.error||"Rename failed";input.focus();return;
+        }
+        workspacePendingPreviewKey=result.key;
+        workspaceSelectedKey=result.key;
+        await browseWorkspace();
+      };
+      input.addEventListener("click",event=>event.stopPropagation());
+      input.addEventListener("keydown",event=>{
+        if(event.key==="Enter"){event.preventDefault();finish(true);}
+        if(event.key==="Escape"){event.preventDefault();finish(false);}
+      });
+      input.addEventListener("blur",()=>finish(true),{once:true});
+    });
     name.append(icon,text);
     const date=document.createElement("div");date.className="object-muted";date.textContent=workspaceDate(obj);
     const typeCell=document.createElement("div");typeCell.className="object-muted";typeCell.textContent=(filename.includes(".")?filename.split(".").pop().toUpperCase():"File");
@@ -772,6 +852,19 @@ function wireWorkspace(){
   drop.addEventListener("drop",e=>uploadLocalFiles(e.dataTransfer?.files));
   $("workspace-browse").addEventListener("click",browseWorkspace);
   $("workspace-refresh").addEventListener("click",browseWorkspace);
+  $("workspace-account")?.addEventListener("change",async()=>{
+    await refreshWorkspaceBucketSuggestions();
+    const accountId=$("workspace-account").value;
+    const profile=r2Profiles().find(p=>p.accountId===accountId);
+    if(profile)$("workspace-bucket").value=profile.bucketName||"";
+    $("workspace-prefix").value="";
+    await browseWorkspace();
+  });
+  $("workspace-bucket")?.addEventListener("change",async()=>{
+    $("workspace-prefix").value="";
+    await browseWorkspace();
+  });
+  $("workspace-bucket")?.addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();browseWorkspace();}});
   $("workspace-up")?.addEventListener("click",()=>navigateWorkspacePrefix(workspaceParent($("workspace-prefix").value)));
   $("workspace-prefix").addEventListener("keydown",e=>{if(e.key==="Enter")browseWorkspace();});
   $("preview-expand")?.addEventListener("click",()=>setWorkspacePreviewExpanded(!workspacePreviewExpanded));
@@ -847,6 +940,9 @@ async function openTransferLocation(item,parts,{preview=false}={}){
     select.value=parts.profile.id;
     workspaceTarget=parts.profile;
   }
+  if($("workspace-account"))$("workspace-account").value=parts.profile.accountId||"";
+  if($("workspace-bucket"))$("workspace-bucket").value=parts.profile.bucketName||"";
+  workspaceBrowseTarget=parts.profile;
   $("workspace-prefix").value=folder;
   workspacePendingPreviewKey=preview?parts.key:"";
   workspaceSelectedKey=preview?parts.key:"";
@@ -1011,6 +1107,8 @@ async function refreshCloudflare(){
   const select=$("cf-account");select.replaceChildren();
   cfAccounts.forEach(a=>{const o=document.createElement("option");o.value=a.id;o.textContent=a.name||a.id;select.append(o);});
   currentAccountId=select.value||"";
+  renderWorkspaceAccounts();
+  await refreshWorkspaceBucketSuggestions();
   if(currentAccountId)await refreshBuckets();
 }
 async function refreshBuckets(){
