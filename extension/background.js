@@ -302,7 +302,7 @@ export default {
         const oldFilename = oldParts.pop();
         const parent = oldParts.join("/");
         const newFilename = cleanName(body.newFilename || "");
-        const newKey = parent ? `${parent}/${newFilename}` : newFilename;
+        const newKey = parent ? \`\${parent}/\${newFilename}\` : newFilename;
         if (newKey === oldKey) {
           return Response.json({ ok: true, key: oldKey, filename: oldFilename });
         }
@@ -314,9 +314,9 @@ export default {
           return Response.json({ ok: false, error: "Original file was not found" }, { status: 404 });
         }
         const encodedKey = newKey.split("/").map(encodeURIComponent).join("/");
-        const publicPath = `/assets/${encodedKey}`;
+        const publicPath = \`/assets/\${encodedKey}\`;
         const publicBaseUrl = safePublicBase(body.publicBaseUrl, requestUrl);
-        const publicUrl = `${publicBaseUrl}/${encodedKey}`;
+        const publicUrl = \`\${publicBaseUrl}/\${encodedKey}\`;
         await env.STORAGE.put(newKey, object.body, {
           httpMetadata: object.httpMetadata,
           customMetadata: {
