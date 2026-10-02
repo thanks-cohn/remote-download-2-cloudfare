@@ -7,6 +7,7 @@ let workspaceObjects=[];
 let workspacePreviewExpanded=false;
 let workspacePreviewLightbox=false;
 let workspacePreviewRequestId=0;
+const defaultLocationPrefixCache=new Map();
 
 function uid(){return crypto.randomUUID();}
 function setStatus(id,msg,kind=""){const el=$(id);el.textContent=msg||"";el.className="status"+(kind?" "+kind:"");}
@@ -384,39 +385,177 @@ function renderProfiles(){
 
 function defaultLocationField(profile){
   const wrap=document.createElement("div");
+  wrap.className="default-location-builder";
   const label=document.createElement("label");
   label.textContent="Default location";
-  const input=document.createElement("input");
-  input.type="text";
-  input.value=profile.defaultPrefix ?? profile.folders?.files ?? "files";
-  input.placeholder="e.g. Historical or Worlds/Ships/Finished";
+  const levels=document.createElement("div");
+  levels.className="location-levels";
   const hint=document.createElement("div");
   hint.className="meta";
-  hint.textContent="Quick send uses this exact R2 path. If it does not exist, REDOWN creates it.";
+  hint.textContent="Choose an existing folder or type a new one at any level. × only removes that level from this builder; it never deletes anything from R2.";
 
-  const saveAndCreate=async()=>{
-    const value=String(input.value||"").trim().replace(/^\/+|\/+$/g,"");
-    profile.defaultPrefix=value;
+  const cacheKey=profile.accountId+":"+profile.bucketName;
+  let segments=String(profile.defaultPrefix ?? profile.folders?.files ?? "")
+    .split("/").filter(Boolean);
+  if(!segments.length) segments=[""];
+
+  const cleanSegment=(value)=>String(value||"")
+    .trim()
+    .replace(/[\\/\0]/g,"")
+    .replace(/^\.+$/,"");
+
+  const allPrefixes=()=>defaultLocationPrefixCache.get(cacheKey)||[];
+
+  const immediateChildren=(parentSegments)=>{
+    const parent=parentSegments.filter(Boolean).join("/");
+    const seen=new Set();
+    for(const raw of allPrefixes()){
+      const parts=String(raw||"").split("/").filter(Boolean);
+      if(parentSegments.filter(Boolean).some((part,index)=>parts[index]!==part)) continue;
+      const child=parts[parentSegments.filter(Boolean).length];
+      if(child) seen.add(child);
+    }
+    return Array.from(seen).sort((a,b)=>a.localeCompare(b,undefined,{numeric:true,sensitivity:"base"}));
+  };
+
+  const currentPrefix=()=>segments.map(cleanSegment).filter(Boolean).join("/");
+
+  const commit=async({materialize=true}={})=>{
+    segments=segments.map(cleanSegment);
+    profile.defaultPrefix=currentPrefix();
     scheduleSave();
-    if(profile.type==="cloudflare-r2"&&value){
+    if(materialize&&profile.defaultPrefix){
       try{
         await saveProfiles();
-        await ensureProfileMenuPrefixes(profile,[value]);
-        hint.textContent="Default location ready: /"+value;
+        await ensureProfileMenuPrefixes(profile,[profile.defaultPrefix]);
+        hint.textContent="Default location ready: /"+profile.defaultPrefix;
+        const cached=new Set(allPrefixes());
+        cached.add(profile.defaultPrefix);
+        defaultLocationPrefixCache.set(cacheKey,Array.from(cached));
       }catch(error){
-        hint.textContent="Saved. REDOWN will create this location when access is ready.";
+        hint.textContent="Saved. REDOWN will create this location when Cloudflare access is ready.";
       }
-    }else if(!value){
-      hint.textContent="Bucket root is now the default quick-send location.";
+    }else if(!profile.defaultPrefix){
+      hint.textContent="Bucket root is the default location. Nothing in R2 was deleted.";
     }
   };
-  input.addEventListener("input",()=>{
-    profile.defaultPrefix=String(input.value||"").trim().replace(/^\/+|\/+$/g,"");
-    scheduleSave();
-  });
-  input.addEventListener("change",saveAndCreate);
-  input.addEventListener("blur",saveAndCreate);
-  wrap.append(label,input,hint);
+
+  const renderLevels=()=>{
+    levels.replaceChildren();
+    segments.forEach((segment,index)=>{
+      const row=document.createElement("div");
+      row.className="location-level-row";
+
+      const parentSegments=segments.slice(0,index).map(cleanSegment).filter(Boolean);
+      const select=document.createElement("select");
+      select.className="location-level-select";
+      const placeholder=document.createElement("option");
+      placeholder.value="";
+      placeholder.textContent=index===0?"Choose existing folder…":"Choose existing child…";
+      select.append(placeholder);
+
+      for(const child of immediateChildren(parentSegments)){
+        const option=document.createElement("option");
+        option.value=child;
+        option.textContent=child;
+        option.selected=child===cleanSegment(segment);
+        select.append(option);
+      }
+
+      const input=document.createElement("input");
+      input.type="text";
+      input.className="location-level-input";
+      input.value=segment||"";
+      input.placeholder=index===0?"or create a new folder":"or create a new child";
+
+      const add=document.createElement("button");
+      add.type="button";
+      add.className="mini";
+      add.textContent="+ Child";
+      add.title="Add another location level";
+
+      const remove=document.createElement("button");
+      remove.type="button";
+      remove.className="mini danger location-level-remove";
+      remove.textContent="×";
+      remove.title="Remove this level from the builder only. This never deletes the R2 folder.";
+
+      select.addEventListener("change",async()=>{
+        if(!select.value)return;
+        segments[index]=select.value;
+        segments=segments.slice(0,index+1);
+        segments.push("");
+        await commit({materialize:true});
+        renderLevels();
+      });
+
+      input.addEventListener("input",()=>{
+        segments[index]=cleanSegment(input.value);
+        profile.defaultPrefix=currentPrefix();
+        scheduleSave();
+      });
+      input.addEventListener("change",async()=>{
+        segments[index]=cleanSegment(input.value);
+        await commit({materialize:true});
+        renderLevels();
+      });
+      input.addEventListener("blur",async()=>{
+        segments[index]=cleanSegment(input.value);
+        await commit({materialize:true});
+      });
+
+      add.addEventListener("click",async()=>{
+        segments[index]=cleanSegment(input.value||select.value||segments[index]);
+        segments=segments.slice(0,index+1);
+        if(!segments[index]){
+          hint.textContent="Choose or create this level before adding a child.";
+          return;
+        }
+        await commit({materialize:true});
+        segments.push("");
+        renderLevels();
+        levels.lastElementChild?.querySelector("input")?.focus();
+      });
+
+      remove.addEventListener("click",async()=>{
+        if(segments.length===1){
+          segments=[""];
+        }else{
+          segments=segments.slice(0,index);
+          if(!segments.length)segments=[""];
+        }
+        await commit({materialize:false});
+        hint.textContent="Removed from the builder only. Existing R2 folders and files were not changed.";
+        renderLevels();
+      });
+
+      row.append(select,input,add,remove);
+      levels.append(row);
+    });
+  };
+
+  const loadExisting=async()=>{
+    if(defaultLocationPrefixCache.has(cacheKey)){
+      renderLevels();
+      return;
+    }
+    hint.innerHTML='<span class="operation-spinner"></span>Loading existing folders…';
+    const result=await send({
+      type:"cfFolderPrefixes",
+      accountId:profile.accountId,
+      bucketName:profile.bucketName,
+      limit:5000
+    });
+    defaultLocationPrefixCache.set(cacheKey,result?.ok?(result.prefixes||[]):[]);
+    hint.textContent=result?.ok
+      ?"Choose existing folders or create new ones. You can continue to any depth."
+      :"Existing folders could not be loaded yet, but you can still create a new path.";
+    renderLevels();
+  };
+
+  wrap.append(label,levels,hint);
+  renderLevels();
+  loadExisting();
   return wrap;
 }
 
