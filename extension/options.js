@@ -35,6 +35,33 @@ function removeNode(nodes,id){
   for(const node of nodes||[]) if(removeNode(node.children,id)) return true;
   return false;
 }
+async function ensureProfileMenuPrefixes(profile, prefixes) {
+  if (profile?.type !== "cloudflare-r2") return;
+  const clean = Array.from(new Set((prefixes || [])
+    .map((value) => String(value || "").trim().replace(/^\/+|\/+$/g, ""))
+    .filter(Boolean)));
+  if (!clean.length) return;
+  const result = await send({
+    type:"cfEnsurePrefixes",
+    accountId:profile.accountId,
+    bucketName:profile.bucketName,
+    accountName:profile.accountName,
+    prefixes:clean
+  });
+  if (!result?.ok) throw new Error(result?.error || "Could not create remote folder");
+}
+function leafMenuPrefixes(nodes) {
+  const out = [];
+  const walk = (items) => {
+    for (const node of items || []) {
+      if (node.children?.length) walk(node.children);
+      else if (node.prefix != null) out.push(node.prefix);
+    }
+  };
+  walk(nodes);
+  return out;
+}
+
 function renderTree(profile){
   const wrap=document.createElement("div");
   wrap.className="tree-editor";
@@ -69,8 +96,10 @@ function renderTree(profile){
       profile.menuTree=[
         {id:uid(),label:"3D",category:"3d",prefix:"3d",path:"assets/3d",children:[]},
         {id:uid(),label:"2D",category:"2d",prefix:"2d",path:"assets/2d",children:[]},
+        {id:uid(),label:"Videos",category:"videos",prefix:"videos",path:"assets/videos",children:[]},
         {id:uid(),label:"Files",category:"files",prefix:"files",path:"assets/files",children:[]}
       ];
+      ensureProfileMenuPrefixes(profile, leafMenuPrefixes(profile.menuTree)).catch(()=>{});
     }
     scheduleSave();
     renderProfiles();
@@ -83,7 +112,7 @@ function renderTree(profile){
 
   const note=document.createElement("div");
   note.className="tree-note";
-  note.textContent="Add children to any item to create another pop-out level. There is no fixed depth.";
+  note.textContent="3D, 2D, Videos, and Files are starter suggestions only. Rename, remove, or add any destination you want. Each leaf uses its exact path.";
   wrap.append(note);
 
   const treeRoot=document.createElement("div");
@@ -139,13 +168,24 @@ function renderTreeNode(profile,node,depth){
     else node.path=target.value;
     scheduleSave();
   });
+  const materializeTarget=async()=>{
+    if(profile.type!=="cloudflare-r2"||node.children.length)return;
+    try{
+      await saveProfiles();
+      await ensureProfileMenuPrefixes(profile,[node.prefix]);
+    }catch(error){
+      console.warn("REDOWN could not materialize menu prefix:",error?.message||String(error));
+    }
+  };
+  target.addEventListener("change",materializeTarget);
+  target.addEventListener("blur",materializeTarget);
 
   const add=document.createElement("button");
   add.className="mini";
   add.textContent="+ Child";
   add.title="Add another pop-out level";
   add.addEventListener("click",()=>{
-    node.children.push(makeNode("New subsection"));
+    node.children.push(makeNode("New destination"));
     scheduleSave();
     renderProfiles();
   });
@@ -340,6 +380,8 @@ function renderProfiles(){
   });
 
   renderWorkspaceProfiles();
+  for (const profile of visibleProfiles)
+    ensureProfileMenuPrefixes(profile, leafMenuPrefixes(profile.menuTree)).catch(()=>{});
   scheduleSave();
 }
 
@@ -473,8 +515,7 @@ async function loadUploadLocations({ preserve = true } = {}) {
   }
 
   if (previous) ensureUploadLocationOption(previous);
-  if (!select.value && Array.from(select.options).some((option) => option.value === "files"))
-    select.value = "files";
+  if (!select.value) select.value = "";
 
   if (hint) hint.textContent = result?.ok
     ? `${Math.max(0, select.options.length - 1)} remote folder${select.options.length === 2 ? "" : "s"} available`
