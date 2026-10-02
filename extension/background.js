@@ -1071,7 +1071,12 @@ async function provisionCloudflareProfile({ accountId, accountName, bucketName, 
     },
     body: JSON.stringify({
       action: "ensurePrefixes",
-      prefixes: explorerOnly ? [] : Object.values(desiredFolders)
+      prefixes: explorerOnly
+        ? []
+        : Array.from(new Set([
+            ...Object.values(desiredFolders),
+            existing?.defaultPrefix ?? folders?.files ?? "files"
+          ].filter(Boolean)))
     })
   });
   const prefixBody = await prefixCheck.json().catch(() => ({}));
@@ -1097,6 +1102,7 @@ async function provisionCloudflareProfile({ accountId, accountName, bucketName, 
       : `${workerUrl}/assets`,
     token: secret,
     folders: desiredFolders,
+    defaultPrefix: existing?.defaultPrefix ?? existing?.folders?.files ?? folders?.files ?? "files",
     defaultCategory: existing?.defaultCategory || "files",
     menuTree: Array.isArray(existing?.menuTree) ? existing.menuTree : [],
     workerVersion: 3,
@@ -1735,7 +1741,9 @@ chrome.contextMenus.onClicked.addListener(async info => {
     if (!profile) return notify("REDOWN", "That destination no longer exists.");
     try {
       const category = categoryForContext(info, sourceUrl, profile);
-      const location = await ingest(profile, sourceUrl, category);
+      const location = profile.type === "cloudflare-r2" && profile.defaultPrefix != null
+        ? await ingestCloudflareAtPrefix(profile, sourceUrl, profile.defaultPrefix, basenameFromUrl(sourceUrl))
+        : await ingest(profile, sourceUrl, category);
       await recordTransfer({ ok:true, sourceUrl, profileId:profile.id, profileName:profile.name, category, location });
       await notify("REDOWN complete", location);
     } catch (error) {
