@@ -763,6 +763,9 @@ let explorerSort = { field: "name", direction: 1 };
 let explorerOperation = null;
 let explorerArchive = null;
 let explorerBucketAccountId = "";
+let explorerSearchActive = false;
+let explorerSearchRequestId = 0;
+let explorerSearchTimer = null;
 let explorerPreparing = new Map();
 const EXPLORER_RENDER_LIMIT = 400;
 let explorerVisibleLimit = EXPLORER_RENDER_LIMIT;
@@ -919,26 +922,118 @@ function buildDirectoryItems(objects, prefix) {
   return [...folders.values(), ...files];
 }
 function sortedVisibleItems() {
-  const query = $("workspace-search")?.value.trim().toLocaleLowerCase() || "";
-  return explorerItems
-    .filter((x) => !query || x.name.toLocaleLowerCase().includes(query))
-    .sort((a, b) => {
-      if (a.folder !== b.folder) return a.folder ? -1 : 1;
-      let av = a[explorerSort.field],
-        bv = b[explorerSort.field];
-      if (explorerSort.field === "modified") {
-        av = av?.getTime() || 0;
-        bv = bv?.getTime() || 0;
-      }
-      if (typeof av === "number") return (av - bv) * explorerSort.direction;
-      return (
-        String(av || "").localeCompare(String(bv || ""), undefined, {
-          numeric: true,
-          sensitivity: "base",
-        }) * explorerSort.direction
-      );
-    });
+  if (explorerSearchActive) return explorerItems.slice();
+  return explorerItems.slice().sort((a, b) => {
+    if (a.folder !== b.folder) return a.folder ? -1 : 1;
+    let av = a[explorerSort.field],
+      bv = b[explorerSort.field];
+    if (explorerSort.field === "modified") {
+      av = av?.getTime() || 0;
+      bv = bv?.getTime() || 0;
+    }
+    if (typeof av === "number") return (av - bv) * explorerSort.direction;
+    return (
+      String(av || "").localeCompare(String(bv || ""), undefined, {
+        numeric: true,
+        sensitivity: "base",
+      }) * explorerSort.direction
+    );
+  });
 }
+function explorerSearchTargets() {
+  if (workspaceTarget) {
+    return [{
+      accountId:workspaceTarget.accountId,
+      accountName:accountName(workspaceTarget.accountId),
+      bucketName:workspaceTarget.bucketName
+    }];
+  }
+  const accounts = explorerBucketAccountId && explorerBucketAccountId !== "__all__"
+    ? explorerAccounts.filter((account)=>account.id===explorerBucketAccountId)
+    : explorerAccounts;
+  return accounts.flatMap((account)=>
+    (explorerBuckets.get(account.id)||[]).map((bucket)=>({
+      accountId:account.id,
+      accountName:account.name||account.id,
+      bucketName:bucket.name
+    }))
+  );
+}
+async function runExplorerSearch(query) {
+  const q=String(query||"").trim();
+  const requestId=++explorerSearchRequestId;
+  if(!q){
+    explorerSearchActive=false;
+    $("explorer-status").textContent="";
+    if(workspaceTarget) return browseWorkspace();
+    return showBucketRows(explorerBucketAccountId==="__all__"?"":explorerBucketAccountId);
+  }
+
+  explorerSearchActive=true;
+  explorerSelected.clear();
+  explorerAnchor=-1;
+  explorerNextCursor="";
+  explorerVisibleLimit=EXPLORER_RENDER_LIMIT;
+  const root=$("workspace-objects");
+  root.innerHTML='<div class="file-empty"><span class="operation-spinner"></span><strong>Searching remote paths…</strong>Matching files and folders across this location.</div>';
+
+  const result=await send({
+    type:"cfSearchObjects",
+    targets:explorerSearchTargets(),
+    query:q,
+    limit:200
+  });
+  if(requestId!==explorerSearchRequestId)return;
+  if(!result?.ok){
+    explorerItems=[];
+    $("explorer-status").textContent=friendlyError(new Error(result?.error||""),"search remote files");
+    return renderFileItems();
+  }
+
+  explorerItems=(result.results||[]).map((entry)=>{
+    const key=String(entry.key||"");
+    const object=entry.object||{};
+    const basename=key.replace(/\/$/,"").split("/").pop()||key;
+    const parent=key.replace(/\/$/,"").split("/").slice(0,-1).join("/");
+    return {
+      id:"search:"+entry.accountId+":"+entry.bucketName+":"+key,
+      name:basename,
+      key,
+      folder:Boolean(entry.folder),
+      kind:entry.folder?"folder":fileKind(key,String(object?.httpMetadata?.contentType||object?.contentType||"")),
+      type:(entry.accountName?entry.accountName+" · ":"")+entry.bucketName+(parent?" · /"+parent:""),
+      size:entry.folder?0:Number(object.size||0),
+      modified:itemDate(object),
+      object,
+      searchResult:true,
+      accountId:entry.accountId,
+      accountName:entry.accountName||accountName(entry.accountId),
+      bucketName:entry.bucketName
+    };
+  });
+  $("explorer-status").textContent=explorerItems.length
+    ? `Found ${explorerItems.length} remote match${explorerItems.length===1?"":"es"} for “${q}”.`
+    : `No remote files or folders matched “${q}”.`;
+  renderFileItems();
+}
+function scheduleExplorerSearch() {
+  clearTimeout(explorerSearchTimer);
+  explorerSearchTimer=setTimeout(()=>runExplorerSearch($("workspace-search")?.value||""),220);
+}
+async function goToSearchResult(item) {
+  if(!item?.searchResult)return;
+  const query=$("workspace-search");
+  if(query)query.value="";
+  explorerSearchActive=false;
+  explorerSearchRequestId++;
+  const clean=item.key.replace(/\/$/,"");
+  const parent=clean.split("/").slice(0,-1).join("/");
+  await goLocation(item.accountId,item.bucketName,parent);
+  const targetId=item.folder?"folder:"+item.key:"file:"+item.key;
+  const real=explorerItems.find((entry)=>entry.id===targetId||entry.key===item.key);
+  if(real) await selectSingleExplorerItem(real,{focus:true});
+}
+
 function setOperation(
   type,
   message,
@@ -1069,6 +1164,8 @@ function rememberLocation() {
   updateNavButtons();
 }
 async function goLocation(accountId, bucketName, prefix = "", remember = true) {
+  explorerSearchActive = false;
+  explorerSearchRequestId++;
   explorerBucketAccountId = "";
   const bucket = (explorerBuckets.get(accountId) || []).find(
     (b) => b.name === bucketName,
@@ -1222,6 +1319,8 @@ function renderSources() {
   renderExplorerChrome();
 }
 function showBucketRows(accountId = "") {
+  explorerSearchActive = false;
+  explorerSearchRequestId++;
   explorerBucketAccountId = accountId || "__all__";
   workspaceTarget = null;
   workspacePrefix = "";
@@ -1335,11 +1434,13 @@ function renderFileItems() {
   const all = sortedVisibleItems();
   const items = all.slice(0, explorerVisibleLimit);
   const query = $("workspace-search")?.value.trim() || "";
-  if (!workspaceTarget && !items.length)
+  if (explorerSearchActive && !items.length)
+    root.innerHTML = `<div class="file-empty"><strong>No remote matches for “${query}”</strong>Try a filename, folder name, or path fragment.</div>`;
+  else if (!workspaceTarget && !items.length)
     root.innerHTML =
       '<div class="file-empty"><strong>No R2 buckets found</strong>Create a bucket to begin.</div>';
   else if (!items.length)
-    root.innerHTML = `<div class="file-empty"><strong>${explorerItems.length ? `No files match “${query}”` : workspacePrefix ? "This folder is empty." : "This bucket is empty."}</strong>${explorerItems.length ? "Try a different search." : "Drop files here or choose Upload."}</div>`;
+    root.innerHTML = `<div class="file-empty"><strong>${workspacePrefix ? "This folder is empty." : "This bucket is empty."}</strong>Drop files here or choose Upload.</div>`;
   items.forEach((item, index) => root.append(createFileRow(item, index)));
   if (all.length > items.length || explorerNextCursor) {
     const more = document.createElement("button");
@@ -1376,11 +1477,13 @@ function renderFileItems() {
   };
   const selected = selectedExplorerItems();
   const bytes = selected.reduce((sum, item) => sum + (item.size || 0), 0);
-  $("explorer-count").textContent = workspaceTarget
-    ? `${all.length}${explorerNextCursor ? "+" : ""} item${all.length === 1 ? "" : "s"}`
-    : explorerBucketAccountId
-      ? `${all.length} bucket${all.length === 1 ? "" : "s"}`
-      : "No location selected";
+  $("explorer-count").textContent = explorerSearchActive
+    ? `${all.length} search result${all.length === 1 ? "" : "s"}`
+    : workspaceTarget
+      ? `${all.length}${explorerNextCursor ? "+" : ""} item${all.length === 1 ? "" : "s"}`
+      : explorerBucketAccountId
+        ? `${all.length} bucket${all.length === 1 ? "" : "s"}`
+        : "No location selected";
   $("explorer-selection").textContent = selected.length
     ? `${selected.length} selected${bytes ? ` · ${formatBytes(bytes)}` : ""}`
     : "";
@@ -1412,14 +1515,20 @@ function createFileRow(item, index) {
   type.textContent = item.type;
   row.append(name, size, modified, type);
   row.onclick = (e) => {
+    if (item.searchResult) return goToSearchResult(item);
     if (item.kind === "bucket") return goLocation(item.accountId, item.bucketName);
     selectExplorerItem(item, index, e);
   };
   row.ondblclick = () => {
+    if (item.searchResult) return goToSearchResult(item);
     if (item.kind === "bucket") return goLocation(item.accountId, item.bucketName);
     openExplorerItem(item);
   };
   row.oncontextmenu = (e) => {
+    if(item.searchResult){
+      e.preventDefault();
+      return goToSearchResult(item);
+    }
     e.preventDefault();
     if (!explorerSelected.has(item.id)) {
       explorerSelected = new Set([item.id]);
@@ -2202,7 +2311,13 @@ function wireWorkspace() {
   }
 
   $("workspace-refresh").onclick = () => workspaceTarget ? browseWorkspace() : loadExplorerInventory();
-  $("workspace-search").oninput = renderFileItems;
+  $("workspace-search").oninput = scheduleExplorerSearch;
+  $("workspace-search").onkeydown = (e) => {
+    if(e.key==="Enter" && explorerSearchActive && explorerItems.length){
+      e.preventDefault();
+      goToSearchResult(explorerItems[0]);
+    }
+  };
   $("preview-expand")?.addEventListener("click", () =>
     setWorkspacePreviewExpanded(!workspacePreviewExpanded),
   );
