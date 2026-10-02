@@ -371,6 +371,115 @@ function publicObjectUrl(profile,key){
   return `${base}/${String(key).split("/").map(encodeURIComponent).join("/")}`;
 }
 function r2Profiles(){return profiles.filter(p=>p.type==="cloudflare-r2");}
+function uploadProfile() {
+  return profiles.find((p) => p.id === $("local-profile")?.value);
+}
+function ensureUploadLocationOption(prefix) {
+  const select = $("local-prefix");
+  if (!select) return;
+  const value = String(prefix || "").replace(/^\/+|\/+$/g, "");
+  if (!Array.from(select.options).some((option) => option.value === value)) {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = value ? "/" + value : "/ (bucket root)";
+    select.append(option);
+  }
+  select.value = value;
+}
+function uploadLocationMatchScore(query, value) {
+  const q = String(query || "").trim().toLocaleLowerCase();
+  const v = String(value || "").toLocaleLowerCase();
+  if (!q) return 0;
+  const leaf = v.split("/").filter(Boolean).pop() || v;
+  if (leaf.startsWith(q)) return 1000 - leaf.length;
+  if (v.startsWith(q)) return 900 - v.length;
+  const leafIndex = leaf.indexOf(q);
+  if (leafIndex >= 0) return 800 - leafIndex * 10 - leaf.length;
+  const pathIndex = v.indexOf(q);
+  if (pathIndex >= 0) return 700 - pathIndex * 10 - v.length;
+
+  // Loose subsequence matching means "alm" can still find "almost".
+  let qi = 0;
+  for (let i = 0; i < v.length && qi < q.length; i++)
+    if (v[i] === q[qi]) qi++;
+  return qi === q.length ? 500 - v.length : -1;
+}
+function chooseBestUploadLocation(query) {
+  const select = $("local-prefix");
+  if (!select) return;
+  const options = Array.from(select.options);
+  if (!query.trim()) return;
+  let best = null, bestScore = -1;
+  for (const option of options) {
+    const score = uploadLocationMatchScore(query, option.value);
+    if (score > bestScore) {
+      best = option;
+      bestScore = score;
+    }
+  }
+  if (best && bestScore >= 0) {
+    select.value = best.value;
+    const hint = $("local-location-hint");
+    if (hint) hint.textContent = "Matched " + (best.value ? "/" + best.value : "/ (bucket root)");
+  }
+}
+async function loadUploadLocations({ preserve = true } = {}) {
+  const profile = uploadProfile();
+  const select = $("local-prefix");
+  const search = $("local-location-search");
+  const hint = $("local-location-hint");
+  if (!select) return;
+
+  const previous = preserve ? select.value : "";
+  select.replaceChildren();
+  const root = document.createElement("option");
+  root.value = "";
+  root.textContent = "/ (bucket root)";
+  select.append(root);
+
+  if (!profile) {
+    if (hint) hint.textContent = "Choose a bucket to load its remote folders.";
+    return;
+  }
+
+  if (hint) hint.innerHTML = '<span class="operation-spinner"></span>Loading remote folders…';
+  const result = await send({
+    type:"cfFolderPrefixes",
+    accountId:profile.accountId,
+    bucketName:profile.bucketName,
+    limit:5000
+  });
+
+  const prefixes = result?.ok ? (result.prefixes || []) : [];
+  for (const prefix of prefixes) {
+    const value = String(prefix || "").replace(/^\/+|\/+$/g, "");
+    if (!value || Array.from(select.options).some((option) => option.value === value)) continue;
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = "/" + value;
+    select.append(option);
+  }
+
+  // Saved/common REDOWN prefixes should remain available even in an empty bucket.
+  for (const value of Object.values(profile.folders || {})) {
+    const clean = String(value || "").replace(/^\/+|\/+$/g, "");
+    if (clean && !Array.from(select.options).some((option) => option.value === clean)) {
+      const option = document.createElement("option");
+      option.value = clean;
+      option.textContent = "/" + clean;
+      select.append(option);
+    }
+  }
+
+  if (previous) ensureUploadLocationOption(previous);
+  if (!select.value && Array.from(select.options).some((option) => option.value === "files"))
+    select.value = "files";
+
+  if (hint) hint.textContent = result?.ok
+    ? `${Math.max(0, select.options.length - 1)} remote folder${select.options.length === 2 ? "" : "s"} available`
+    : "Could not load folders yet. The bucket itself is still available.";
+  if (search?.value.trim()) chooseBestUploadLocation(search.value);
+}
 function renderWorkspaceProfiles(){
   const select=$("local-profile");
   if(!select)return;
@@ -381,8 +490,10 @@ function renderWorkspaceProfiles(){
     option.value=profile.id;option.textContent=`${displayName(profile)} · ${profile.bucketName}`;select.append(option);
   }
   if(Array.from(select.options).some(o=>o.value===previous))select.value=previous;
+  else if(select.options.length) select.selectedIndex=0;
   const uploadCard=$("local-dropzone")?.closest(".card");
   if(uploadCard)uploadCard.hidden=!select.options.length;
+  loadUploadLocations();
 }
 function categoryFromPrefix(prefix){
   const first=String(prefix||"").split("/").filter(Boolean)[0]?.toLowerCase();
@@ -396,7 +507,7 @@ async function uploadLocalFiles(fileList){
   if(!files.length)return;
   const profile=profiles.find(p=>p.id===$("local-profile").value);
   if(!profile)return setStatus("local-upload-status","Choose an R2 bucket first.","bad");
-  const prefix=$("local-prefix").value.trim();
+  const prefix=String($("local-prefix")?.value || "").trim();
   const status=$("local-upload-status");
   let completed=0;
   for(const file of files){
@@ -967,8 +1078,11 @@ async function goLocation(accountId, bucketName, prefix = "", remember = true) {
   const uploadProfile = r2Profiles().find(
     (p) => p.accountId === accountId && p.bucketName === bucketName,
   );
-  if (uploadProfile && $("local-profile"))
+  if (uploadProfile && $("local-profile")) {
     $("local-profile").value = uploadProfile.id;
+    await loadUploadLocations({ preserve:false });
+    ensureUploadLocationOption(workspacePrefix.replace(/\/$/, ""));
+  }
   if ($("explorer-location"))
     $("explorer-location").value = `${accountId}|${bucketName}`;
   explorerSelected.clear();
@@ -1804,7 +1918,8 @@ async function explorerUploadFiles(files, prefix = workspacePrefix) {
   const profile = await ensurePrepared(workspaceTarget);
   await refreshProfiles();
   $("local-profile").value = profile.id;
-  $("local-prefix").value = normalizePrefix(prefix).replace(/\/$/, "");
+  await loadUploadLocations({ preserve:false });
+  ensureUploadLocationOption(normalizePrefix(prefix).replace(/\/$/, ""));
   await uploadLocalFiles(files);
 }
 function handleLocalDrop(event, prefix) {
@@ -2031,7 +2146,7 @@ function wireWorkspace() {
       }
     };
     picker.onchange = async () => {
-      await explorerUploadFiles(picker.files);
+      await uploadLocalFiles(picker.files);
       picker.value = "";
     };
     for (const n of ["dragenter", "dragover"])
@@ -2045,8 +2160,38 @@ function wireWorkspace() {
         drop.classList.remove("drag");
       });
     drop.ondrop = (e) =>
-      explorerUploadFiles(e.dataTransfer?.files, workspacePrefix);
+      uploadLocalFiles(e.dataTransfer?.files);
   }
+  const bucketSelect = $("local-profile");
+  const locationSearch = $("local-location-search");
+  const locationSelect = $("local-prefix");
+  if (bucketSelect) {
+    bucketSelect.onchange = async () => {
+      if (locationSearch) locationSearch.value = "";
+      await loadUploadLocations({ preserve:false });
+    };
+  }
+  if (locationSearch) {
+    locationSearch.oninput = () => chooseBestUploadLocation(locationSearch.value);
+    locationSearch.onkeydown = (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        chooseBestUploadLocation(locationSearch.value);
+        locationSelect?.focus();
+      }
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        locationSelect?.focus();
+      }
+    };
+  }
+  if (locationSelect) {
+    locationSelect.onchange = () => {
+      const hint = $("local-location-hint");
+      if (hint) hint.textContent = "Upload destination: " + (locationSelect.value ? "/" + locationSelect.value : "/ (bucket root)");
+    };
+  }
+
   $("workspace-refresh").onclick = () => workspaceTarget ? browseWorkspace() : loadExplorerInventory();
   $("workspace-search").oninput = renderFileItems;
   $("preview-expand")?.addEventListener("click", () =>
@@ -2056,7 +2201,15 @@ function wireWorkspace() {
     setWorkspacePreviewLightbox(!workspacePreviewLightbox),
   );
   $("explorer-new-folder").onclick = () => workspaceTarget && beginNewFolder();
-  $("explorer-upload").onclick = () => workspaceTarget && picker.click();
+  $("explorer-upload").onclick = async () => {
+    if (!workspaceTarget) return;
+    const profile = await ensurePrepared(workspaceTarget);
+    await refreshProfiles();
+    $("local-profile").value = profile.id;
+    await loadUploadLocations({ preserve:false });
+    ensureUploadLocationOption(workspacePrefix.replace(/\/$/, ""));
+    picker.click();
+  };
   $("properties-close").onclick = () => $("explorer-properties").close();
   $("explorer-back").onclick = () => navigateHistory(-1);
   $("explorer-forward").onclick = () => navigateHistory(1);
