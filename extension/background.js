@@ -142,12 +142,94 @@ async function checkedFetch(raw, hops = 5) {
   }
   throw new Error("Too many redirects");
 }
+const utf8 = new TextEncoder();
+const readUtf8 = new TextDecoder();
+const ARCHIVE_MAX_INDEX = 4 * 1024 * 1024;
+const ARCHIVE_MAX_ENTRY = 512 * 1024 * 1024;
+function bytesHex(bytes) { return Array.from(bytes, x => x.toString(16).padStart(2, "0")).join(""); }
+async function readSignature(key, expires) {
+  const cryptoKey = await crypto.subtle.importKey("raw", utf8.encode(REDOWN_SHARED_SECRET), { name:"HMAC", hash:"SHA-256" }, false, ["sign"]);
+  return bytesHex(new Uint8Array(await crypto.subtle.sign("HMAC", cryptoKey, utf8.encode(key + "\\n" + expires))));
+}
+async function signedReadUrl(requestUrl, key, ttl = 900) {
+  const expires = Math.floor(Date.now() / 1000) + Math.max(30, Math.min(3600, Number(ttl) || 900));
+  const signature = await readSignature(key, expires);
+  return requestUrl.origin + "/private/object?key=" + encodeURIComponent(key) + "&expires=" + expires + "&signature=" + signature;
+}
+async function validSignedRead(url, key) {
+  const expires = Number(url.searchParams.get("expires"));
+  const supplied = url.searchParams.get("signature") || "";
+  if (!Number.isSafeInteger(expires) || expires < Math.floor(Date.now() / 1000) || expires > Math.floor(Date.now() / 1000) + 3605) return false;
+  const expected = await readSignature(key, expires);
+  if (supplied.length !== expected.length) return false;
+  let difference = 0;
+  for (let i = 0; i < expected.length; i++) difference |= supplied.charCodeAt(i) ^ expected.charCodeAt(i);
+  return difference === 0;
+}
+async function objectBytes(storage, key, offset, length) {
+  const object = await storage.get(key, { range:{ offset, length } });
+  if (!object) throw new Error("Object not found");
+  return new Uint8Array(await new Response(object.body).arrayBuffer());
+}
+function safeArchiveName(name) {
+  const normalized = String(name || "").replace(/\\\\/g, "/").replace(/^\\.\\//, "");
+  if (!normalized || normalized.startsWith("/") || /^[a-z]:\\//i.test(normalized) || normalized.split("/").some(part => !part || part === "." || part === ".." || part.includes("\\0"))) throw new Error("Archive contains an unsafe path");
+  if (normalized.split("/").length > 64) throw new Error("Archive path is too deep");
+  return normalized;
+}
+async function archiveEntries(storage, key) {
+  if (!/\\.(zip|cbz)$/i.test(key)) throw new Error("Only ZIP and CBZ archives are supported");
+  const head = await storage.head(key);
+  if (!head || head.size < 22) throw new Error("Malformed ZIP archive");
+  const tailLength = Math.min(head.size, 65557);
+  const tailOffset = head.size - tailLength;
+  const tail = await objectBytes(storage, key, tailOffset, tailLength);
+  const view = new DataView(tail.buffer, tail.byteOffset, tail.byteLength);
+  let eocd = -1;
+  for (let i = tail.length - 22; i >= 0; i--) if (view.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+  if (eocd < 0) throw new Error("Malformed ZIP archive: central directory was not found");
+  const count = view.getUint16(eocd + 10, true), indexSize = view.getUint32(eocd + 12, true), indexOffset = view.getUint32(eocd + 16, true);
+  if (count > 10000 || indexSize > ARCHIVE_MAX_INDEX || indexOffset + indexSize > head.size) throw new Error("Archive index exceeds safe limits");
+  const index = await objectBytes(storage, key, indexOffset, indexSize);
+  const central = new DataView(index.buffer, index.byteOffset, index.byteLength);
+  const entries = [];
+  let cursor = 0;
+  for (let i = 0; i < count; i++) {
+    if (cursor + 46 > index.length || central.getUint32(cursor, true) !== 0x02014b50) throw new Error("Malformed ZIP central directory");
+    const flags = central.getUint16(cursor + 8, true), method = central.getUint16(cursor + 10, true);
+    const compressedSize = central.getUint32(cursor + 20, true), size = central.getUint32(cursor + 24, true);
+    const nameLength = central.getUint16(cursor + 28, true), extraLength = central.getUint16(cursor + 30, true), commentLength = central.getUint16(cursor + 32, true);
+    const name = safeArchiveName(readUtf8.decode(index.slice(cursor + 46, cursor + 46 + nameLength)));
+    if (flags & 1) throw new Error("Encrypted archives are not supported");
+    if (![0, 8].includes(method)) throw new Error("Archive uses an unsupported compression method");
+    if (size > ARCHIVE_MAX_ENTRY || (compressedSize && size / compressedSize > 200)) throw new Error("Archive entry exceeds safe expansion limits");
+    entries.push({ name, size, compressedSize, method, directory:name.endsWith("/"), offset:central.getUint32(cursor + 42, true) });
+    cursor += 46 + nameLength + extraLength + commentLength;
+  }
+  return entries;
+}
+async function archiveEntryBytes(storage, key, requested) {
+  const entry = (await archiveEntries(storage, key)).find(item => item.name === requested);
+  if (!entry || entry.directory) throw new Error("Archive entry was not found");
+  const local = await objectBytes(storage, key, entry.offset, 30);
+  const header = new DataView(local.buffer, local.byteOffset, local.byteLength);
+  if (header.getUint32(0, true) !== 0x04034b50) throw new Error("Malformed ZIP entry");
+  const dataOffset = entry.offset + 30 + header.getUint16(26, true) + header.getUint16(28, true);
+  const compressed = await objectBytes(storage, key, dataOffset, entry.compressedSize);
+  if (entry.method === 0) return compressed;
+  const output = new Uint8Array(await new Response(new Blob([compressed]).stream().pipeThrough(new DecompressionStream("deflate-raw"))).arrayBuffer());
+  if (output.byteLength !== entry.size || output.byteLength > ARCHIVE_MAX_ENTRY) throw new Error("Archive entry failed safe decompression checks");
+  return output;
+}
 export default {
   async fetch(request, env) {
     const requestUrl = new URL(request.url);
     const assetPrefix = "/assets/";
 
     if ((request.method === "GET" || request.method === "HEAD") && requestUrl.pathname.startsWith(assetPrefix)) {
+      if (String(env.PUBLIC_ASSETS_ENABLED || "false") !== "true") {
+        return new Response("Public asset delivery is not enabled", { status: 404 });
+      }
       const rawKey = requestUrl.pathname.slice(assetPrefix.length);
       let key = "";
       try {
@@ -231,17 +313,39 @@ export default {
 
     const auth = request.headers.get("authorization") || "";
     const authorized = Boolean(REDOWN_SHARED_SECRET) && auth === \`Bearer \${REDOWN_SHARED_SECRET}\`;
-    if (request.method === "GET" && requestUrl.pathname === "/object") {
-      if (!authorized) return Response.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+    if (request.method === "GET" && requestUrl.pathname === "/private/archive-entry") {
+      let key, entry;
+      try { key = cleanPrefix(requestUrl.searchParams.get("key") || ""); entry = safeArchiveName(requestUrl.searchParams.get("entry") || ""); }
+      catch (error) { return Response.json({ ok:false, error:error.message }, { status:400 }); }
+      if (!authorized && !(await validSignedRead(requestUrl, key + "\\narchive:" + entry))) return Response.json({ ok:false, error:"Unauthorized" }, { status:401 });
+      const bytes = await archiveEntryBytes(env.STORAGE, key, entry);
+      return new Response(bytes, { headers:{ "content-type":requestUrl.searchParams.get("type") || "application/octet-stream", "content-length":String(bytes.byteLength), "cache-control":"private, no-store" } });
+    }
+    if ((request.method === "GET" || request.method === "HEAD") && (requestUrl.pathname === "/object" || requestUrl.pathname === "/private/object")) {
       let key;
       try { key = cleanPrefix(requestUrl.searchParams.get("key") || ""); } catch (error) { return Response.json({ ok:false, error:error.message }, { status:400 }); }
-      const object = key && await env.STORAGE.get(key);
-      if (!object) return Response.json({ ok:false, error:"Object not found" }, { status:404 });
+      const signed = requestUrl.pathname === "/private/object" && await validSignedRead(requestUrl, key);
+      if (!authorized && !signed) return Response.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+      const head = key && await env.STORAGE.head(key);
+      if (!head) return Response.json({ ok:false, error:"Object not found" }, { status:404 });
       const headers = new Headers();
-      object.writeHttpMetadata(headers);
-      headers.set("content-length", String(object.size));
-      headers.set("x-redown-metadata", encodeURIComponent(JSON.stringify(object.customMetadata || {})));
-      return new Response(object.body, { status:200, headers });
+      head.writeHttpMetadata(headers);
+      headers.set("accept-ranges", "bytes");
+      headers.set("cache-control", "private, no-store");
+      headers.set("x-redown-metadata", encodeURIComponent(JSON.stringify(head.customMetadata || {})));
+      if (request.method === "HEAD") { headers.set("content-length", String(head.size)); return new Response(null, { status:200, headers }); }
+      const match = request.headers.get("range")?.match(/^bytes=(\\d*)-(\\d*)$/);
+      let offset = 0, length = head.size, status = 200;
+      if (match) {
+        const requestedStart = match[1] ? Number(match[1]) : Math.max(0, head.size - Number(match[2] || 0));
+        const requestedEnd = match[1] ? (match[2] ? Number(match[2]) : head.size - 1) : head.size - 1;
+        if (!Number.isSafeInteger(requestedStart) || requestedStart < 0 || requestedStart >= head.size || requestedEnd < requestedStart) return new Response(null, { status:416, headers:{ "content-range":\`bytes */\${head.size}\` } });
+        offset = requestedStart; length = Math.min(head.size - 1, requestedEnd) - offset + 1; status = 206;
+        headers.set("content-range", \`bytes \${offset}-\${offset + length - 1}/\${head.size}\`);
+      }
+      const object = await env.STORAGE.get(key, { range:{ offset, length } });
+      headers.set("content-length", String(length));
+      return new Response(object.body, { status, headers });
     }
     if (request.method === "GET") return Response.json({ ok:true, service:"REDOWN", secretConfigured:Boolean(REDOWN_SHARED_SECRET), storageBound:Boolean(env.STORAGE) });
     if (request.method !== "POST") return Response.json({ ok:false, error:"Method not allowed" }, { status:405 });
@@ -321,6 +425,51 @@ export default {
         const head = key && await env.STORAGE.head(key);
         if (!head) return Response.json({ ok:false, error:"Object not found" }, { status:404 });
         return Response.json({ ok:true, object:{ key, size:head.size, etag:head.etag, httpEtag:head.httpEtag, uploaded:head.uploaded, httpMetadata:head.httpMetadata, customMetadata:head.customMetadata } });
+      }
+      if (body.action === "createReadUrl") {
+        const key = cleanPrefix(body.key);
+        if (!key || !(await env.STORAGE.head(key))) return Response.json({ ok:false, error:"Object not found" }, { status:404 });
+        return Response.json({ ok:true, url:await signedReadUrl(requestUrl, key, body.ttl), expiresIn:Math.max(30, Math.min(3600, Number(body.ttl) || 900)) });
+      }
+      if (body.action === "listArchive") {
+        const key = cleanPrefix(body.key);
+        return Response.json({ ok:true, archive:{ key, type:/\\.cbz$/i.test(key)?"cbz":"zip", entries:await archiveEntries(env.STORAGE, key) } });
+      }
+      if (body.action === "createArchiveEntryReadUrl") {
+        const key = cleanPrefix(body.key), entry = safeArchiveName(body.entry);
+        const canonical = key + "\\narchive:" + entry, expires = Math.floor(Date.now() / 1000) + 900;
+        const signature = await readSignature(canonical, expires);
+        const url = requestUrl.origin + "/private/archive-entry?key=" + encodeURIComponent(key) + "&entry=" + encodeURIComponent(entry) + "&type=" + encodeURIComponent(body.contentType || "application/octet-stream") + "&expires=" + expires + "&signature=" + signature;
+        return Response.json({ ok:true, url, expiresIn:900 });
+      }
+      if (body.action === "extractArchiveEntries") {
+        const key = cleanPrefix(body.key), prefix = cleanPrefix(body.destinationPrefix || "");
+        const requested = Array.from(new Set(body.entries || [])).slice(0, 1000);
+        const results = [];
+        for (const rawName of requested) {
+          try {
+            const name = safeArchiveName(rawName), bytes = await archiveEntryBytes(env.STORAGE, key, name);
+            const destinationKey = cleanPrefix((prefix ? prefix + "/" : "") + name);
+            await env.STORAGE.put(destinationKey, bytes, { customMetadata:{ extractedFrom:key, extractedAt:new Date().toISOString() } });
+            results.push({ name, destinationKey, status:"extracted" });
+          } catch (error) { results.push({ name:String(rawName), status:"failed", error:error.message || String(error) }); }
+        }
+        return Response.json({ ok:true, results });
+      }
+      if (body.action === "receiveArchiveEntries") {
+        const sourceWorkerUrl=String(body.sourceWorkerUrl || "").replace(/\\/+$/, ""), sourceToken=String(body.sourceToken || ""), sourceKey=cleanPrefix(body.sourceKey), prefix=cleanPrefix(body.destinationPrefix || "");
+        if (!/^https:\\/\\/[^/]+$/.test(sourceWorkerUrl) || !sourceToken) throw new Error("Source bucket is not ready");
+        const results=[];
+        for (const rawName of Array.from(new Set(body.entries || [])).slice(0, 1000)) {
+          try {
+            const name=safeArchiveName(rawName), destinationKey=cleanPrefix((prefix ? prefix + "/" : "") + name);
+            const response=await fetch(sourceWorkerUrl + "/private/archive-entry?key=" + encodeURIComponent(sourceKey) + "&entry=" + encodeURIComponent(name), { headers:{ authorization:"Bearer " + sourceToken } });
+            if (!response.ok || !response.body) throw new Error("Archive entry was not available");
+            await env.STORAGE.put(destinationKey, response.body, { httpMetadata:{ contentType:response.headers.get("content-type") || "application/octet-stream" }, customMetadata:{ extractedFrom:sourceKey, extractedAt:new Date().toISOString() } });
+            results.push({ name,destinationKey,status:"extracted" });
+          } catch (error) { results.push({ name:String(rawName),status:"failed",error:error.message || String(error) }); }
+        }
+        return Response.json({ ok:true,results });
       }
       if (body.action === "deleteKeys") {
         const keys = Array.from(new Set((body.keys || []).map(cleanPrefix).filter(Boolean))).slice(0, 100);
@@ -837,7 +986,8 @@ async function provisionCloudflareProfile({ accountId, accountName, bucketName, 
     compatibility_date: "2026-09-26",
     bindings: [
       { type: "r2_bucket", name: "STORAGE", bucket_name: bucketName },
-      { type: "plain_text", name: "MAX_BYTES", text: "314572800" }
+      { type: "plain_text", name: "MAX_BYTES", text: "314572800" },
+      { type: "plain_text", name: "PUBLIC_ASSETS_ENABLED", text: String(Boolean(!explorerOnly && (existing?.publicAssetsEnabled ?? (existing && !existing.explorerManaged)))) }
     ]
   };
   const form = new FormData();
@@ -946,8 +1096,17 @@ async function provisionCloudflareProfile({ accountId, accountName, bucketName, 
     folders: desiredFolders,
     defaultCategory: existing?.defaultCategory || "files",
     menuTree: Array.isArray(existing?.menuTree) ? existing.menuTree : [],
-    workerVersion: 2,
+    workerVersion: 3,
     explorerManaged: Boolean(explorerOnly),
+    publicAssetsEnabled: Boolean(!explorerOnly && (existing?.publicAssetsEnabled ?? (existing && !existing.explorerManaged))),
+    capabilities: {
+      canBrowse: true,
+      canPrivateRead: true,
+      canPublicRead: Boolean(!explorerOnly && (existing?.publicAssetsEnabled ?? (existing && !existing.explorerManaged))),
+      canWrite: true,
+      canTransfer: true,
+      canArchiveInspect: true
+    },
     showInContextMenu: explorerOnly ? false : (existing?.showInContextMenu !== false),
     menuOrder: existing?.menuOrder ?? profiles.length
   };
@@ -1040,14 +1199,27 @@ async function configureAssetDomain(accountId, bucketName, website) {
     ...profile,
     customAssetDomain: hostname,
     allowedWebsiteOrigin: origin,
-    publicBaseUrl: `https://${hostname}/assets`
+    publicBaseUrl: `https://${hostname}/assets`,
+    publicAssetsEnabled: true,
+    explorerManaged: false
   };
   await setProfiles(profiles);
+
+  // Public delivery is an explicit capability. Redeploy only after the user
+  // attaches a serving domain so merely opening Explorer never publishes R2.
+  const published = await provisionCloudflareProfile({
+    accountId,
+    accountName: profile.accountName,
+    bucketName,
+    profileName: profile.name,
+    folders: profile.folders,
+    explorerOnly: false
+  });
 
   return {
     origin,
     hostname,
-    publicBaseUrl: profiles[index].publicBaseUrl,
+    publicBaseUrl: published.publicBaseUrl,
     domain: attached
   };
 }
@@ -1095,7 +1267,7 @@ function cleanExplorerName(value) {
 async function preparedProfile(accountId, bucketName, accountName = "") {
   let profiles = await getProfiles();
   let profile = profiles.find(p => p.type === "cloudflare-r2" && p.accountId === accountId && p.bucketName === bucketName);
-  if (profile?.workerVersion >= 2) return profile;
+  if (profile?.workerVersion >= 3) return profile;
   return provisionCloudflareProfile({ accountId, accountName:accountName || profile?.accountName, bucketName, profileName:profile?.name || bucketName, folders:profile?.folders || {}, explorerOnly:Boolean(profile?.explorerManaged || !profile) });
 }
 async function callBucketWorker(profile, body) {
@@ -1485,11 +1657,35 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         const profile=await preparedProfile(message.accountId,message.bucketName,message.accountName);
         return sendResponse({ ok:true, profile:{workerUrl:profile.workerUrl,publicBaseUrl:profile.publicBaseUrl}, ...(await callBucketWorker(profile,{action:"headObject",key:message.key})) });
       }
+      if (message?.type === "cfPrivateObjectUrl") {
+        const profile=await preparedProfile(message.accountId,message.bucketName,message.accountName);
+        const key=cleanExplorerPrefix(message.key).replace(/\/$/, "");
+        return sendResponse({ ok:true, ...(await callBucketWorker(profile,{action:"createReadUrl",key,ttl:message.ttl || 900})) });
+      }
+      if (message?.type === "cfArchiveEntries") {
+        const profile=await preparedProfile(message.accountId,message.bucketName,message.accountName);
+        return sendResponse({ ok:true, ...(await callBucketWorker(profile,{action:"listArchive",key:message.key})) });
+      }
+      if (message?.type === "cfArchiveEntryUrl") {
+        const profile=await preparedProfile(message.accountId,message.bucketName,message.accountName);
+        return sendResponse({ ok:true, ...(await callBucketWorker(profile,{action:"createArchiveEntryReadUrl",key:message.key,entry:message.entry,contentType:message.contentType})) });
+      }
+      if (message?.type === "cfExtractArchive") {
+        const profile=await preparedProfile(message.accountId,message.bucketName,message.accountName);
+        return sendResponse({ ok:true, ...(await callBucketWorker(profile,{action:"extractArchiveEntries",key:message.key,entries:message.entries,destinationPrefix:message.destinationPrefix || ""})) });
+      }
+      if (message?.type === "cfTransferArchive") {
+        const source=await preparedProfile(message.source.accountId,message.source.bucketName,message.source.accountName);
+        const destination=await preparedProfile(message.destination.accountId,message.destination.bucketName,message.destination.accountName);
+        if(source.id===destination.id) return sendResponse({ok:true,...(await callBucketWorker(source,{action:"extractArchiveEntries",key:message.key,entries:message.entries,destinationPrefix:message.destination.prefix || ""}))});
+        return sendResponse({ok:true,...(await callBucketWorker(destination,{action:"receiveArchiveEntries",sourceWorkerUrl:source.workerUrl,sourceToken:source.token,sourceKey:message.key,entries:message.entries,destinationPrefix:message.destination.prefix || ""}))});
+      }
       if (message?.type === "cfDownloadObject") {
         const profile=await preparedProfile(message.accountId,message.bucketName,message.accountName);
         const key=cleanExplorerPrefix(message.key).replace(/\/$/, "");
         if (!key) throw new Error("Choose a file to download");
-        const downloadId=await chrome.downloads.download({ url:publicAssetUrl(profile,key), filename:cleanExplorerName(message.filename || key.split("/").pop()), saveAs:message.saveAs !== false });
+        const signed=await callBucketWorker(profile,{action:"createReadUrl",key,ttl:3600});
+        const downloadId=await chrome.downloads.download({ url:signed.url, filename:cleanExplorerName(message.filename || key.split("/").pop()), saveAs:message.saveAs !== false });
         return sendResponse({ ok:true, downloadId });
       }
       if (message?.type === "recordLocalTransfer") {

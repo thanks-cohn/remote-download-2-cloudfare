@@ -489,7 +489,7 @@ function appendDetails(root,obj,key,url,type){
   link.textContent=url;
   root.append(link);
 }
-async function showWorkspacePreview(obj,row){
+async function showWorkspacePreview(obj,row,urlOverride=""){
   const root=$("workspace-preview");
   root.replaceChildren();
   document.querySelectorAll("#workspace-objects .object.active").forEach(el=>el.classList.remove("active"));
@@ -501,7 +501,12 @@ async function showWorkspacePreview(obj,row){
     try{previewProfile=await ensurePrepared(workspaceTarget);}catch(error){preparing.textContent=friendlyError(error,"prepare the preview");return;}
     root.replaceChildren();
   }
-  const url=publicObjectUrl(previewProfile,key);
+  let url=urlOverride;
+  if(!url){
+    const privateRead=await send({type:"cfPrivateObjectUrl",...explorerSource(),key,ttl:900});
+    if(!privateRead?.ok){root.textContent=friendlyError(new Error(privateRead?.error||""),"open this preview");return;}
+    url=privateRead.url;
+  }
   const type=objectContentType(obj,key);
   const head=document.createElement("div");head.className="preview-head";
   const title=document.createElement("div");title.className="preview-title";title.textContent=key;
@@ -549,9 +554,16 @@ async function showWorkspacePreview(obj,row){
     const note=document.createElement("div");
     note.className="meta";
     note.textContent=type.includes("gltf")
-      ?"3D asset detected. Metadata and public URL are ready; interactive 3D preview can be added next."
+      ?"Interactive 3D preview · drag to orbit · wheel to zoom · use Reset view to reframe the model."
       :"No inline renderer for this file type yet. Details and public URL are available below.";
     media.append(note);
+    if(type.includes("gltf")){
+      const viewer=document.createElement("model-viewer");
+      viewer.setAttribute("src",url);viewer.setAttribute("camera-controls","");viewer.setAttribute("auto-rotate","");viewer.setAttribute("shadow-intensity","1");viewer.setAttribute("interaction-prompt","none");
+      viewer.style.cssText="display:block;width:100%;height:360px;background:radial-gradient(circle,#283041,#10131a)";
+      const reset=document.createElement("button");reset.type="button";reset.className="ghost";reset.textContent="Reset view";reset.onclick=()=>{viewer.cameraOrbit="0deg 75deg 105%";viewer.jumpCameraToGoal?.();};
+      media.append(viewer,reset);
+    }
     root.append(media);
   }
 
@@ -579,6 +591,7 @@ let explorerHistoryIndex = -1;
 let explorerClipboard = null;
 let explorerSort = { field: "name", direction: 1 };
 let explorerOperation = null;
+let explorerArchive = null;
 let explorerPreparing = new Map();
 const EXPLORER_RENDER_LIMIT = 400;
 let explorerVisibleLimit = EXPLORER_RENDER_LIMIT;
@@ -635,7 +648,7 @@ function fileKind(key, type = "") {
   if (type.startsWith("audio/") || ["mp3", "wav", "ogg", "flac"].includes(ext))
     return "audio";
   if (ext === "pdf") return "pdf";
-  if (["zip", "tar", "gz", "7z", "rar"].includes(ext)) return "archive";
+  if (["zip", "cbz", "tar", "gz", "7z", "rar"].includes(ext)) return "archive";
   if (["glb", "gltf", "obj", "fbx", "stl"].includes(ext)) return "model";
   if (
     [
@@ -875,6 +888,7 @@ async function goLocation(accountId, bucketName, prefix = "", remember = true) {
     bucket,
   };
   workspacePrefix = normalizePrefix(prefix);
+  explorerArchive = null;
   if ($("local-prefix"))
     $("local-prefix").value = workspacePrefix.replace(/\/$/, "");
   const uploadProfile = r2Profiles().find(
@@ -894,7 +908,7 @@ function updateNavButtons() {
   $("explorer-back").disabled = explorerHistoryIndex <= 0;
   $("explorer-forward").disabled =
     explorerHistoryIndex >= explorerHistory.length - 1;
-  $("explorer-up").disabled = !workspaceTarget || !workspacePrefix;
+  $("explorer-up").disabled = !workspaceTarget || (!workspacePrefix && !explorerArchive);
 }
 function renderExplorerChrome() {
   const crumbs = $("explorer-breadcrumbs");
@@ -913,11 +927,20 @@ function renderExplorerChrome() {
     cumulative += part + "/";
     parts.push({ label: part, prefix: cumulative });
   }
+  if (explorerArchive) {
+    parts.push({ label: explorerArchive.name + " · Archive", archivePrefix:"" });
+    let archivePath = "";
+    for (const part of explorerArchive.prefix.split("/").filter(Boolean)) {
+      archivePath += part + "/";
+      parts.push({ label:part, archivePrefix:archivePath });
+    }
+  }
   parts.forEach((part, index) => {
     const button = document.createElement("button");
     button.className = "crumb";
     button.textContent = part.label;
     button.onclick = () => {
+      if (Object.hasOwn(part, "archivePrefix")) return renderArchiveFolder(part.archivePrefix);
       if (part.kind === "root") return loadExplorerInventory();
       if (part.kind === "account") {
         const first = (explorerBuckets.get(workspaceTarget.accountId) || [])[0];
@@ -1214,19 +1237,65 @@ function rootRow(id) {
   ).find((x) => x.dataset.id === id);
 }
 async function openExplorerItem(item) {
+  if (item.archiveEntry && item.folder) return renderArchiveFolder(item.key);
   if (item.folder)
     return goLocation(
       workspaceTarget.accountId,
       workspaceTarget.bucketName,
       item.key,
     );
+  if (item.kind === "archive" && /\.(zip|cbz)$/i.test(item.key)) return openArchive(item);
+  if (item.archiveEntry) return previewArchiveEntry(item);
   await showWorkspacePreview(item.object, rootRow(item.id));
+}
+async function openArchive(item) {
+  setOperation("archive", "Inspecting archive…");
+  const result = await send({ type:"cfArchiveEntries", ...explorerSource(), key:item.key });
+  if (!result?.ok) return finishOperation(friendlyError(new Error(result?.error || ""), "inspect this archive"), true);
+  explorerArchive = { key:item.key, name:item.name, type:result.archive?.type || "zip", entries:result.archive?.entries || [], prefix:"" };
+  finishOperation(`${explorerArchive.entries.length} archive entries`);
+  renderArchiveFolder();
+  renderExplorerChrome();
+}
+function renderArchiveFolder(prefix = "") {
+  if (!explorerArchive) return;
+  explorerArchive.prefix = prefix;
+  const folders = new Map(), files = [];
+  for (const entry of explorerArchive.entries) {
+    if (!entry.name.startsWith(prefix) || entry.name === prefix) continue;
+    const rest = entry.name.slice(prefix.length), slash = rest.indexOf("/");
+    if (slash >= 0) {
+      const name = rest.slice(0, slash);
+      folders.set(name, { id:`archive:${prefix}${name}/`, name, key:prefix + name + "/", folder:true, kind:"folder", type:"Folder", size:0, archiveEntry:true });
+    } else if (!entry.directory) files.push({ id:`archive:${entry.name}`, name:rest, key:entry.name, folder:false, kind:fileKind(entry.name), type:itemType(entry.name), size:entry.size || 0, object:entry, archiveEntry:true });
+  }
+  explorerItems = [...folders.values(), ...files];
+  explorerSelected.clear(); explorerAnchor = -1;
+  renderFileItems();
+}
+async function previewArchiveEntry(item) {
+  const contentType=objectContentType(item.object,item.key);
+  const result=await send({type:"cfArchiveEntryUrl",...explorerSource(),key:explorerArchive.key,entry:item.key,contentType});
+  if(!result?.ok)return finishOperation(friendlyError(new Error(result?.error||""),"preview this archive entry"),true);
+  await showWorkspacePreview({...item.object,key:item.key,httpMetadata:{contentType}},rootRow(item.id),result.url);
+}
+async function extractArchiveSelection(items = selectedExplorerItems(), destinationPrefix = workspacePrefix) {
+  const entries = items.filter(item => item.archiveEntry && !item.folder).map(item => item.key);
+  if (!explorerArchive || !entries.length) return;
+  setOperation("extract", `Extracting ${entries.length} file${entries.length === 1 ? "" : "s"}…`, entries.length);
+  const result = await send({ type:"cfExtractArchive", ...explorerSource(), key:explorerArchive.key, entries, destinationPrefix });
+  if (!result?.ok) return finishOperation(friendlyError(new Error(result?.error || ""), "extract archive entries"), true);
+  const completed=(result.results || []).filter(x=>x.status==="extracted").length, failed=(result.results || []).length-completed;
+  finishOperation(failed ? `${completed} files extracted · ${failed} files could not be extracted` : `${completed} files extracted`, Boolean(failed));
 }
 function selectedExplorerItems() {
   return explorerItems.filter((x) => explorerSelected.has(x.id));
 }
 function clipboardEntries(items = selectedExplorerItems()) {
-  return items.map((item) => ({
+  const expanded=items.flatMap((item)=>item.archiveEntry&&item.folder
+    ? explorerArchive.entries.filter((entry)=>!entry.directory&&entry.name.startsWith(item.key)).map((entry)=>({...item,key:entry.name,folder:false,displayName:entry.name.split("/").pop()}))
+    : [item]);
+  return expanded.map((item) => ({
     key: item.key,
     folder: item.folder,
     displayName: item.name,
@@ -1243,6 +1312,7 @@ async function setExplorerClipboard(
     bucketName: workspaceTarget.bucketName,
     accountName: accountName(workspaceTarget.accountId),
     entries: clipboardEntries(items),
+    archiveKey: items.some((item) => item.archiveEntry) ? explorerArchive?.key : null,
   };
   await chrome.storage.session.set({ explorerClipboard });
   renderFileItems();
@@ -1251,6 +1321,15 @@ async function pasteExplorer(
   destination = { ...explorerSource(), prefix: workspacePrefix },
 ) {
   if (!explorerClipboard?.entries?.length) return;
+  if (explorerClipboard.archiveKey) {
+    const files=explorerClipboard.entries.filter((entry)=>!entry.folder);
+    setOperation("extract",`Extracting ${files.length} file${files.length===1?"":"s"} to destination…`,files.length);
+    const result=await send({type:"cfTransferArchive",source:{accountId:explorerClipboard.accountId,bucketName:explorerClipboard.bucketName,accountName:explorerClipboard.accountName},destination,key:explorerClipboard.archiveKey,entries:files.map((entry)=>entry.key)});
+    if(!result?.ok)return finishOperation(friendlyError(new Error(result?.error||""),"send archive entries"),true);
+    const completed=(result.results||[]).filter((entry)=>entry.status==="extracted").length,failed=(result.results||[]).length-completed;
+    finishOperation(failed?`${completed} files extracted · ${failed} files could not be extracted`:`${completed} files extracted`,Boolean(failed));
+    return;
+  }
   setOperation(
     explorerClipboard.operation,
     `${explorerClipboard.operation === "move" ? "Moving" : "Copying"} ${explorerClipboard.entries.length} selected item${explorerClipboard.entries.length === 1 ? "" : "s"}…`,
@@ -1584,6 +1663,7 @@ function showExplorerMenu(x, y, item) {
     menu.append(e);
   };
   if (item) {
+    if (item.archiveEntry) menu.append(menuButton("Extract", () => extractArchiveSelection(selected)));
     menu.append(
       menuButton(item.folder ? "Open" : "Open / Preview", () =>
         openExplorerItem(item),
@@ -1657,8 +1737,8 @@ function showExplorerMenu(x, y, item) {
         }),
       );
     sep();
-    if (!item.folder)
-      menu.append(menuButton("Copy URL", () => copyItemUrl(item)));
+    if (!item.folder && r2Profiles().some(p=>p.accountId===workspaceTarget.accountId&&p.bucketName===workspaceTarget.bucketName&&p.publicAssetsEnabled))
+      menu.append(menuButton("Copy public URL", () => copyItemUrl(item)));
     menu.append(
       menuButton(
         "Properties",
@@ -1722,6 +1802,12 @@ function wireWorkspace() {
   $("explorer-back").onclick = () => navigateHistory(-1);
   $("explorer-forward").onclick = () => navigateHistory(1);
   $("explorer-up").onclick = () => {
+    if (explorerArchive) {
+      const archiveParts=explorerArchive.prefix.split("/").filter(Boolean);
+      if (archiveParts.length) { archiveParts.pop(); return renderArchiveFolder(archiveParts.join("/") + (archiveParts.length ? "/" : "")); }
+      const parent=explorerArchive.key.split("/").slice(0,-1).join("/");
+      return goLocation(workspaceTarget.accountId,workspaceTarget.bucketName,parent);
+    }
     const parts = workspacePrefix.split("/").filter(Boolean);
     parts.pop();
     goLocation(
