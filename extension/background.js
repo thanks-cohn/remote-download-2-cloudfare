@@ -1071,12 +1071,7 @@ async function provisionCloudflareProfile({ accountId, accountName, bucketName, 
     },
     body: JSON.stringify({
       action: "ensurePrefixes",
-      prefixes: explorerOnly
-        ? []
-        : Array.from(new Set([
-            ...Object.values(desiredFolders),
-            existing?.defaultPrefix ?? folders?.files ?? "files"
-          ].filter(Boolean)))
+      prefixes: explorerOnly ? [] : Object.values(desiredFolders)
     })
   });
   const prefixBody = await prefixCheck.json().catch(() => ({}));
@@ -1102,7 +1097,6 @@ async function provisionCloudflareProfile({ accountId, accountName, bucketName, 
       : `${workerUrl}/assets`,
     token: secret,
     folders: desiredFolders,
-    defaultPrefix: existing?.defaultPrefix ?? existing?.folders?.files ?? folders?.files ?? "files",
     defaultCategory: existing?.defaultCategory || "files",
     menuTree: Array.isArray(existing?.menuTree) ? existing.menuTree : [],
     workerVersion: 3,
@@ -1262,98 +1256,6 @@ async function listAllObjects(accountId, bucketName, prefix = "") {
     cursor = result.cursor;
   }
   return objects;
-}
-function explorerSearchScore(query, key) {
-  const q=String(query||"").trim().toLocaleLowerCase().replace(/\\/g,"/");
-  const value=String(key||"").toLocaleLowerCase();
-  if(!q||!value)return -1;
-  if(value===q)return 10000;
-  if(value.startsWith(q))return 9000-q.length;
-  const direct=value.indexOf(q);
-  if(direct>=0)return 8000-direct;
-
-  const tokens=q.split("/").filter(Boolean);
-  let tokenScore=0, cursor=0;
-  for(const token of tokens){
-    const found=value.indexOf(token,cursor);
-    if(found<0){
-      // Loose subsequence match, useful for incomplete path fragments.
-      let qi=0;
-      for(let i=cursor;i<value.length&&qi<token.length;i++) if(value[i]===token[qi]) qi++;
-      if(qi!==token.length)return -1;
-      tokenScore+=250;
-    }else{
-      tokenScore+=1000-Math.min(found,500);
-      cursor=found+token.length;
-    }
-  }
-  return tokenScore;
-}
-async function searchExplorerObjects(targets, query, limit = 200) {
-  const ranked=[];
-  const seenFolders=new Set();
-  for(const target of targets||[]){
-    if(!target?.accountId||!target?.bucketName)continue;
-    const objects=await listAllObjects(target.accountId,target.bucketName,"");
-    for(const object of objects){
-      const key=String(object.key||object.name||"");
-      if(!key)continue;
-      const fileScore=explorerSearchScore(query,key);
-      if(fileScore>=0&&key.split("/").pop()!==".redown"){
-        ranked.push({
-          score:fileScore,
-          accountId:target.accountId,
-          accountName:target.accountName||"",
-          bucketName:target.bucketName,
-          key,
-          folder:false,
-          object
-        });
-      }
-      const parts=key.split("/").filter(Boolean);
-      const depth=parts[parts.length-1]===".redown"?parts.length-1:Math.max(0,parts.length-1);
-      let folder="";
-      for(let i=0;i<depth;i++){
-        folder+=(folder?"/":"")+parts[i];
-        const id=target.accountId+"\n"+target.bucketName+"\n"+folder;
-        if(seenFolders.has(id))continue;
-        seenFolders.add(id);
-        const score=explorerSearchScore(query,folder+"/");
-        if(score>=0)ranked.push({
-          score:score+100,
-          accountId:target.accountId,
-          accountName:target.accountName||"",
-          bucketName:target.bucketName,
-          key:folder+"/",
-          folder:true
-        });
-      }
-    }
-  }
-  ranked.sort((a,b)=>b.score-a.score||String(a.key).localeCompare(String(b.key),undefined,{numeric:true,sensitivity:"base"}));
-  return ranked.slice(0,Math.max(1,Math.min(500,Number(limit)||200)));
-}
-async function listFolderPrefixes(accountId, bucketName, limit = 5000) {
-  const objects = await listAllObjects(accountId, bucketName, "");
-  const prefixes = new Set([""]);
-  for (const object of objects) {
-    const key = String(object.key || object.name || "");
-    if (!key) continue;
-    const parts = key.split("/").filter(Boolean);
-    // Files contribute each parent path; R2 folder markers contribute their folder too.
-    const isMarker = parts[parts.length - 1] === ".redown";
-    const depth = isMarker ? parts.length - 1 : Math.max(0, parts.length - 1);
-    let current = "";
-    for (let i = 0; i < depth; i++) {
-      current += (current ? "/" : "") + parts[i];
-      prefixes.add(current);
-      if (prefixes.size >= limit) break;
-    }
-    if (prefixes.size >= limit) break;
-  }
-  return Array.from(prefixes).sort((a, b) =>
-    a.localeCompare(b, undefined, { numeric:true, sensitivity:"base" })
-  );
 }
 function cleanExplorerPrefix(value) {
   const parts = String(value || "").split("/").filter(Boolean);
@@ -1592,36 +1494,21 @@ async function ensureGitHubWorkflow(profile) {
   });
   if (!create.ok) throw new Error(`Could not install GitHub ingest workflow (${create.status})`);
 }
-async function ingestCloudflareAtPrefix(profile, sourceUrl, prefix, filename) {
-  const prepared = await preparedProfile(
-    profile.accountId,
-    profile.bucketName,
-    profile.accountName
-  );
-  const folder = cleanExplorerPrefix(prefix || "").replace(/\/$/, "");
-  const response = await fetch(prepared.workerUrl, {
+async function ingestCloudflare(profile, sourceUrl, category, filename) {
+  const folder = profile.folders?.[category] || category;
+  const response = await fetch(profile.workerUrl, {
     method: "POST",
     headers: {
-      authorization: `Bearer ${prepared.token || ""}`,
+      authorization: `Bearer ${profile.token || ""}`,
       "content-type": "application/json"
     },
-    body: JSON.stringify({
-      sourceUrl,
-      folder,
-      filename,
-      publicBaseUrl: prepared.publicBaseUrl || `${prepared.workerUrl}/assets`
-    })
+    body: JSON.stringify({ sourceUrl, folder, filename, publicBaseUrl: profile.publicBaseUrl || `${profile.workerUrl}/assets` })
   });
   const text = await response.text();
   let body;
-  try { body = JSON.parse(text); } catch { body = { ok:false, error:text }; }
-  if (!response.ok || !body.ok)
-    throw new Error(body.error || `Cloudflare ingest failed (${response.status})`);
-  return body.publicUrl || publicAssetUrl(prepared, body.key);
-}
-async function ingestCloudflare(profile, sourceUrl, category, filename) {
-  const folder = profile.folders?.[category] || category;
-  return ingestCloudflareAtPrefix(profile, sourceUrl, folder, filename);
+  try { body = JSON.parse(text); } catch { body = { ok: false, error: text }; }
+  if (!response.ok || !body.ok) throw new Error(body.error || `Cloudflare ingest failed (${response.status})`);
+  return body.publicUrl || publicAssetUrl(profile, body.key);
 }
 async function ingestGitHub(profile, sourceUrl, category, filename) {
   const repo = String(profile.repository || "").trim();
@@ -1741,9 +1628,7 @@ chrome.contextMenus.onClicked.addListener(async info => {
     if (!profile) return notify("REDOWN", "That destination no longer exists.");
     try {
       const category = categoryForContext(info, sourceUrl, profile);
-      const location = profile.type === "cloudflare-r2" && profile.defaultPrefix != null
-        ? await ingestCloudflareAtPrefix(profile, sourceUrl, profile.defaultPrefix, basenameFromUrl(sourceUrl))
-        : await ingest(profile, sourceUrl, category);
+      const location = await ingest(profile, sourceUrl, category);
       await recordTransfer({ ok:true, sourceUrl, profileId:profile.id, profileName:profile.name, category, location });
       await notify("REDOWN complete", location);
     } catch (error) {
@@ -1771,49 +1656,27 @@ chrome.contextMenus.onClicked.addListener(async info => {
   if (!node || (Array.isArray(node.children) && node.children.length)) return;
 
   const category = node.category || profile.defaultCategory || "files";
+  const originalFolders = profile.folders;
+  const originalPaths = profile.paths;
 
   try {
-    let location;
-    if (profile.type === "cloudflare-r2") {
-      const prefix = String(node.prefix ?? "").trim();
-      location = await ingestCloudflareAtPrefix(
-        profile,
-        sourceUrl,
-        prefix,
-        basenameFromUrl(sourceUrl)
-      );
-    } else if (profile.type === "github") {
-      const originalPaths = profile.paths;
-      try {
-        profile.paths = { ...(profile.paths || {}), [category]: node.path ?? "" };
-        location = await ingest(profile, sourceUrl, category);
-      } finally {
-        profile.paths = originalPaths;
-      }
-    } else {
-      location = await ingest(profile, sourceUrl, category);
+    if (profile.type === "cloudflare-r2" && node.prefix != null) {
+      profile.folders = { ...(profile.folders || {}), [category]: node.prefix };
+    }
+    if (profile.type === "github" && node.path != null) {
+      profile.paths = { ...(profile.paths || {}), [category]: node.path };
     }
 
-    await recordTransfer({
-      ok:true,
-      sourceUrl,
-      profileId:profile.id,
-      profileName:profile.name,
-      category,
-      location
-    });
+    const location = await ingest(profile, sourceUrl, category);
+    await recordTransfer({ ok:true, sourceUrl, profileId:profile.id, profileName:profile.name, category, location });
     await notify("REDOWN complete", location);
   } catch (error) {
     const message = error?.message || String(error);
-    await recordTransfer({
-      ok:false,
-      sourceUrl,
-      profileId:profile.id,
-      profileName:profile.name,
-      category,
-      error:message
-    });
+    await recordTransfer({ ok:false, sourceUrl, profileId:profile.id, profileName:profile.name, category, error:message });
     await notify("REDOWN failed", message);
+  } finally {
+    profile.folders = originalFolders;
+    profile.paths = originalPaths;
   }
 });
 
@@ -1846,23 +1709,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         return sendResponse({ ok:true, ...(await configureAssetDomain(message.accountId,message.bucketName,message.website)) });
       }
       if (message?.type === "cfObjects") return sendResponse({ ok:true, ...(await listObjects(message.accountId,message.bucketName,message.prefix,message.cursor)) });
-      if (message?.type === "cfFolderPrefixes") return sendResponse({ ok:true, prefixes:await listFolderPrefixes(message.accountId,message.bucketName,message.limit || 5000) });
-      if (message?.type === "cfSearchObjects") return sendResponse({ ok:true, results:await searchExplorerObjects(message.targets || [], message.query, message.limit || 200) });
       if (message?.type === "cfPrepareBucket") return sendResponse({ ok:true, profile:await preparedProfile(message.accountId,message.bucketName,message.accountName) });
       if (message?.type === "cfTransferObjects") return sendResponse({ ok:true, ...(await transferExplorerObjects(message)) });
       if (message?.type === "cfDeleteObjects") return sendResponse({ ok:true, ...(await deleteExplorerObjects(message)) });
       if (message?.type === "cfRenameEntry") return sendResponse({ ok:true, ...(await renameExplorerEntry(message)) });
       if (message?.type === "cfCreateFolder") return sendResponse({ ok:true, ...(await createExplorerFolder(message)) });
-      if (message?.type === "cfEnsurePrefixes") {
-        const profile=await preparedProfile(message.accountId,message.bucketName,message.accountName);
-        return sendResponse({
-          ok:true,
-          ...(await callBucketWorker(profile,{
-            action:"ensurePrefixes",
-            prefixes:Array.isArray(message.prefixes)?message.prefixes:[]
-          }))
-        });
-      }
       if (message?.type === "cfObjectProperties") {
         const profile=await preparedProfile(message.accountId,message.bucketName,message.accountName);
         return sendResponse({ ok:true, profile:{workerUrl:profile.workerUrl,publicBaseUrl:profile.publicBaseUrl}, ...(await callBucketWorker(profile,{action:"headObject",key:message.key})) });
