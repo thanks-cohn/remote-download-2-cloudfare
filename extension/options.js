@@ -520,8 +520,12 @@ async function showWorkspacePreview(obj,row,urlOverride=""){
   const type=objectContentType(obj,key);
   const head=document.createElement("div");head.className="preview-head";
   const title=document.createElement("div");title.className="preview-title";title.textContent=key;
+  const controls=document.createElement("div");controls.className="preview-nav";
+  const previous=document.createElement("button");previous.className="ghost preview-arrow";previous.type="button";previous.setAttribute("aria-label","Previous file");previous.title="Previous file";previous.textContent="←";previous.addEventListener("click",()=>navigatePreview(-1));
+  const next=document.createElement("button");next.className="ghost preview-arrow";next.type="button";next.setAttribute("aria-label","Next file");next.title="Next file";next.textContent="→";next.addEventListener("click",()=>navigatePreview(1));
   const expand=document.createElement("button");expand.className="ghost";expand.type="button";expand.textContent=workspacePreviewExpanded?"Collapse":"Expand";expand.addEventListener("click",()=>setWorkspacePreviewExpanded(!workspacePreviewExpanded));
-  head.append(title,expand);root.append(head);
+  controls.append(previous,next,expand);
+  head.append(title,controls);root.append(head);
 
   const media=document.createElement("div");
   media.className="preview-media";
@@ -584,6 +588,7 @@ function setWorkspacePreviewExpanded(expanded){
   workspacePreviewExpanded=Boolean(expanded);
   const grid=document.querySelector(".explorer-body");
   grid?.classList.toggle("expanded",workspacePreviewExpanded);
+  if (workspacePreviewExpanded) $("explorer")?.focus?.({ preventScroll:true });
   const button=$("#preview-expand")||document.querySelector("#workspace-preview .preview-head button");
   if(button)button.textContent=workspacePreviewExpanded?"Collapse":"Expand";
 }
@@ -1301,6 +1306,58 @@ function createFileRow(item, index) {
   row.ontouchend = row.ontouchmove = () => clearTimeout(timer);
   return row;
 }
+function previewableExplorerItems() {
+  return sortedVisibleItems().filter(
+    (item) => item.kind !== "bucket" && !item.folder,
+  );
+}
+async function previewExplorerItem(item) {
+  if (!item || item.kind === "bucket") return;
+  if (item.folder) {
+    const root = $("workspace-preview");
+    root.replaceChildren();
+    const head=document.createElement("div");head.className="preview-head";
+    const title=document.createElement("div");title.className="preview-title";title.textContent=item.name;
+    const controls=document.createElement("div");controls.className="preview-nav";
+    const expand=document.createElement("button");expand.className="ghost";expand.type="button";expand.textContent=workspacePreviewExpanded?"Collapse":"Expand";expand.addEventListener("click",()=>setWorkspacePreviewExpanded(!workspacePreviewExpanded));
+    controls.append(expand);head.append(title,controls);
+    const note=document.createElement("div");note.className="preview-folder";note.innerHTML=iconSvg("folder")+"<strong>Folder</strong><span>Press Enter to open this folder.</span>";
+    root.append(head,note);
+    return;
+  }
+  if (item.archiveEntry) return previewArchiveEntry(item);
+  return showWorkspacePreview(item.object || { key:item.key, size:item.size }, rootRow(item.id));
+}
+async function selectSingleExplorerItem(item, { focus = false, scroll = true } = {}) {
+  if (!item || item.kind === "bucket") return;
+  explorerSelected = new Set([item.id]);
+  const items = sortedVisibleItems();
+  explorerAnchor = Math.max(0, items.findIndex((entry) => entry.id === item.id));
+  renderFileItems();
+  const row = rootRow(item.id);
+  if (scroll) row?.scrollIntoView({ block:"nearest" });
+  if (focus) row?.focus({ preventScroll:true });
+  await previewExplorerItem(item);
+}
+async function navigateExplorerSelection(delta) {
+  const items = sortedVisibleItems().filter((item) => item.kind !== "bucket");
+  if (!items.length) return;
+  const selected = selectedExplorerItems()[0];
+  let index = selected ? items.findIndex((item) => item.id === selected.id) : -1;
+  if (index < 0) index = delta > 0 ? -1 : 0;
+  index = Math.max(0, Math.min(items.length - 1, index + delta));
+  await selectSingleExplorerItem(items[index], { focus:true });
+}
+async function navigatePreview(delta) {
+  const items = previewableExplorerItems();
+  if (!items.length) return;
+  const selected = selectedExplorerItems()[0];
+  let index = selected ? items.findIndex((item) => item.id === selected.id) : -1;
+  if (index < 0) index = delta > 0 ? -1 : 0;
+  index = (index + delta + items.length) % items.length;
+  await selectSingleExplorerItem(items[index], { focus:false });
+}
+
 function selectExplorerItem(item, index, event = {}) {
   const items = sortedVisibleItems();
   if (event.shiftKey && explorerAnchor >= 0) {
@@ -1317,8 +1374,8 @@ function selectExplorerItem(item, index, event = {}) {
     explorerAnchor = index;
   }
   renderFileItems();
-  if (!item.folder && explorerSelected.size === 1)
-    showWorkspacePreview(item.object, rootRow(item.id));
+  if (explorerSelected.size === 1)
+    previewExplorerItem(item);
 }
 function rootRow(id) {
   return Array.from(
@@ -2018,12 +2075,30 @@ function wireWorkspace() {
     } else if (e.key === "Delete") {
       e.preventDefault();
       deleteSelection();
-    } else if (e.key === "Enter" && selected.length === 1)
+    } else if (e.key === "Enter" && selected.length === 1) {
+      e.preventDefault();
       openExplorerItem(selected[0]);
-    else if (e.key === "Escape") {
+    } else if (!e.altKey && !command && e.key === "ArrowDown") {
+      e.preventDefault();
+      navigateExplorerSelection(1);
+    } else if (!e.altKey && !command && e.key === "ArrowUp") {
+      e.preventDefault();
+      navigateExplorerSelection(-1);
+    } else if (!e.altKey && !command && e.key === "ArrowRight") {
+      e.preventDefault();
+      navigatePreview(1);
+    } else if (!e.altKey && !command && e.key === "ArrowLeft") {
+      e.preventDefault();
+      navigatePreview(-1);
+    } else if (e.key === "Escape") {
       hideExplorerMenu();
-      explorerSelected.clear();
-      renderFileItems();
+      if (workspacePreviewExpanded) {
+        e.preventDefault();
+        setWorkspacePreviewExpanded(false);
+      } else {
+        explorerSelected.clear();
+        renderFileItems();
+      }
     } else if (e.key === "Backspace" || (e.altKey && e.key === "ArrowLeft")) {
       e.preventDefault();
       navigateHistory(-1);
