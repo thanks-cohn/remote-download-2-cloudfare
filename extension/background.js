@@ -1267,16 +1267,74 @@ function cleanExplorerName(value) {
   if (!name || name === "." || name === ".." || /[\\/\0]/.test(name)) throw new Error("Enter a valid name without slashes");
   return name.slice(0, 180);
 }
-async function preparedProfile(accountId, bucketName, accountName = "") {
+async function workerAcceptsProfile(profile) {
+  if (!profile?.workerUrl || !profile?.token) return false;
+  try {
+    const response = await fetch(profile.workerUrl, {
+      method:"POST",
+      cache:"no-store",
+      headers:{
+        authorization:`Bearer ${profile.token}`,
+        "content-type":"application/json",
+        "cache-control":"no-cache"
+      },
+      body:JSON.stringify({ action:"ensurePrefixes", prefixes:[] })
+    });
+    if (response.status === 401 || response.status === 403) return false;
+    const result = await response.json().catch(() => ({}));
+    return response.ok && result?.ok;
+  } catch {
+    return false;
+  }
+}
+async function preparedProfile(accountId, bucketName, accountName = "", forceRepair = false) {
   let profiles = await getProfiles();
   let profile = profiles.find(p => p.type === "cloudflare-r2" && p.accountId === accountId && p.bucketName === bucketName);
-  if (profile?.workerVersion >= 3) return profile;
-  return provisionCloudflareProfile({ accountId, accountName:accountName || profile?.accountName, bucketName, profileName:profile?.name || bucketName, folders:profile?.folders || {}, explorerOnly:Boolean(profile?.explorerManaged || !profile) });
+  if (!forceRepair && profile?.workerVersion >= 3 && await workerAcceptsProfile(profile)) return profile;
+
+  return provisionCloudflareProfile({
+    accountId,
+    accountName:accountName || profile?.accountName,
+    bucketName,
+    profileName:profile?.name || bucketName,
+    folders:profile?.folders || {},
+    explorerOnly:Boolean(profile?.explorerManaged || !profile)
+  });
 }
-async function callBucketWorker(profile, body) {
-  const response = await fetch(profile.workerUrl, { method:"POST", headers:{ authorization:`Bearer ${profile.token || ""}`, "content-type":"application/json" }, body:JSON.stringify(body) });
+async function callBucketWorker(profile, body, allowRepair = true) {
+  let active = profile;
+  let response = await fetch(active.workerUrl, {
+    method:"POST",
+    headers:{
+      authorization:`Bearer ${active.token || ""}`,
+      "content-type":"application/json"
+    },
+    body:JSON.stringify(body)
+  });
+
+  if (allowRepair && (response.status === 401 || response.status === 403)) {
+    active = await preparedProfile(
+      active.accountId,
+      active.bucketName,
+      active.accountName,
+      true
+    );
+    response = await fetch(active.workerUrl, {
+      method:"POST",
+      headers:{
+        authorization:`Bearer ${active.token || ""}`,
+        "content-type":"application/json"
+      },
+      body:JSON.stringify(body)
+    });
+  }
+
   const result = await response.json().catch(() => ({}));
-  if (!response.ok || !result?.ok) throw new Error(result?.error || `Bucket operation failed (${response.status})`);
+  if (!response.ok || !result?.ok) {
+    const error = new Error(result?.error || `Bucket operation failed (${response.status})`);
+    error.status = response.status;
+    throw error;
+  }
   return result;
 }
 async function expandExplorerEntries(accountId, bucketName, entries) {
