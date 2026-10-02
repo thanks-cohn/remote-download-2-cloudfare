@@ -592,6 +592,7 @@ let explorerClipboard = null;
 let explorerSort = { field: "name", direction: 1 };
 let explorerOperation = null;
 let explorerArchive = null;
+let explorerBucketAccountId = "";
 let explorerPreparing = new Map();
 const EXPLORER_RENDER_LIMIT = 400;
 let explorerVisibleLimit = EXPLORER_RENDER_LIMIT;
@@ -877,6 +878,7 @@ function rememberLocation() {
   updateNavButtons();
 }
 async function goLocation(accountId, bucketName, prefix = "", remember = true) {
+  explorerBucketAccountId = "";
   const bucket = (explorerBuckets.get(accountId) || []).find(
     (b) => b.name === bucketName,
   );
@@ -914,6 +916,19 @@ function renderExplorerChrome() {
   const crumbs = $("explorer-breadcrumbs");
   crumbs.replaceChildren();
   if (!workspaceTarget) {
+    const rootButton = document.createElement("button");
+    rootButton.className = "crumb";
+    rootButton.textContent = "Cloudflare";
+    rootButton.onclick = () => showBucketRows();
+    crumbs.append(rootButton);
+    if (explorerBucketAccountId && explorerBucketAccountId !== "__all__") {
+      const accountButton = document.createElement("button");
+      accountButton.className = "crumb";
+      accountButton.textContent = accountName(explorerBucketAccountId);
+      accountButton.onclick = () => showBucketRows(explorerBucketAccountId);
+      crumbs.append(accountButton);
+    }
+    document.querySelectorAll(".source-item").forEach((el) => el.classList.remove("active"));
     updateNavButtons();
     return;
   }
@@ -941,12 +956,8 @@ function renderExplorerChrome() {
     button.textContent = part.label;
     button.onclick = () => {
       if (Object.hasOwn(part, "archivePrefix")) return renderArchiveFolder(part.archivePrefix);
-      if (part.kind === "root") return loadExplorerInventory();
-      if (part.kind === "account") {
-        const first = (explorerBuckets.get(workspaceTarget.accountId) || [])[0];
-        if (first) goLocation(workspaceTarget.accountId, first.name);
-        return;
-      }
+      if (part.kind === "root") return showBucketRows();
+      if (part.kind === "account") return showBucketRows(workspaceTarget.accountId);
       goLocation(
         workspaceTarget.accountId,
         workspaceTarget.bucketName,
@@ -981,9 +992,12 @@ function renderSources() {
   for (const account of explorerAccounts) {
     const group = document.createElement("div");
     group.className = "account-group";
-    const label = document.createElement("div");
-    label.className = "account-label";
+    const label = document.createElement("button");
+    label.className = "account-label account-button";
+    label.type = "button";
     label.textContent = account.name || account.id;
+    label.title = "Show this account's buckets";
+    label.onclick = () => showBucketRows(account.id);
     group.append(label);
     for (const bucket of explorerBuckets.get(account.id) || []) {
       const button = document.createElement("button");
@@ -1013,6 +1027,43 @@ function renderSources() {
   };
   renderExplorerChrome();
 }
+function showBucketRows(accountId = "") {
+  explorerBucketAccountId = accountId || "__all__";
+  workspaceTarget = null;
+  workspacePrefix = "";
+  explorerArchive = null;
+  explorerNextCursor = "";
+  explorerVisibleLimit = EXPLORER_RENDER_LIMIT;
+  explorerSelected.clear();
+  explorerAnchor = -1;
+
+  const accounts = accountId
+    ? explorerAccounts.filter((account) => account.id === accountId)
+    : explorerAccounts;
+
+  explorerItems = accounts.flatMap((account) =>
+    (explorerBuckets.get(account.id) || []).map((bucket) => ({
+      id: "bucket:" + account.id + ":" + bucket.name,
+      name: bucket.name,
+      key: bucket.name,
+      folder: false,
+      kind: "bucket",
+      type: accountId
+        ? "Cloudflare R2 bucket"
+        : "Cloudflare R2 · " + (account.name || account.id),
+      size: 0,
+      modified: null,
+      accountId: account.id,
+      bucketName: bucket.name,
+      accountName: account.name || account.id,
+      bucket,
+    })),
+  );
+
+  renderExplorerChrome();
+  renderFileItems();
+}
+
 async function loadExplorerInventory() {
   const accountsResult = await send({ type: "cfAccounts" });
   if (!accountsResult?.ok)
@@ -1045,12 +1096,7 @@ async function loadExplorerInventory() {
   if (valid)
     await goLocation(stored.accountId, stored.bucketName, stored.prefix);
   else {
-    const account = explorerAccounts.find(
-      (a) => (explorerBuckets.get(a.id) || []).length,
-    );
-    const bucket = account && (explorerBuckets.get(account.id) || [])[0];
-    if (bucket) await goLocation(account.id, bucket.name);
-    else renderFileItems();
+    showBucketRows();
   }
 }
 async function browseWorkspace({ append = false } = {}) {
@@ -1095,7 +1141,7 @@ function renderFileItems() {
   const all = sortedVisibleItems();
   const items = all.slice(0, explorerVisibleLimit);
   const query = $("workspace-search")?.value.trim() || "";
-  if (!workspaceTarget)
+  if (!workspaceTarget && !items.length)
     root.innerHTML =
       '<div class="file-empty"><strong>No R2 buckets found</strong>Create a bucket to begin.</div>';
   else if (!items.length)
@@ -1138,7 +1184,9 @@ function renderFileItems() {
   const bytes = selected.reduce((sum, item) => sum + (item.size || 0), 0);
   $("explorer-count").textContent = workspaceTarget
     ? `${all.length}${explorerNextCursor ? "+" : ""} item${all.length === 1 ? "" : "s"}`
-    : "No location selected";
+    : explorerBucketAccountId
+      ? `${all.length} bucket${all.length === 1 ? "" : "s"}`
+      : "No location selected";
   $("explorer-selection").textContent = selected.length
     ? `${selected.length} selected${bytes ? ` · ${formatBytes(bytes)}` : ""}`
     : "";
@@ -1148,14 +1196,14 @@ function createFileRow(item, index) {
   row.className = `file-row${item.folder ? " folder" : ""}${explorerSelected.has(item.id) ? " selected" : ""}${explorerClipboard?.operation === "move" && explorerClipboard.entries.some((x) => x.key === item.key) ? " cut" : ""}`;
   row.dataset.id = item.id;
   row.tabIndex = 0;
-  row.draggable = true;
+  row.draggable = item.kind !== "bucket";
   row.setAttribute("role", "row");
   row.setAttribute("aria-selected", String(explorerSelected.has(item.id)));
   const name = document.createElement("div");
   name.className = "file-cell file-name";
   const icon = document.createElement("span");
   icon.className = "file-icon";
-  icon.innerHTML = iconSvg(item.folder ? "folder" : item.kind);
+  icon.innerHTML = iconSvg(item.kind === "bucket" ? "bucket" : item.folder ? "folder" : item.kind);
   const text = document.createElement("span");
   text.textContent = item.name;
   name.append(icon, text);
@@ -1169,8 +1217,14 @@ function createFileRow(item, index) {
   type.className = "file-cell file-muted";
   type.textContent = item.type;
   row.append(name, size, modified, type);
-  row.onclick = (e) => selectExplorerItem(item, index, e);
-  row.ondblclick = () => openExplorerItem(item);
+  row.onclick = (e) => {
+    if (item.kind === "bucket") return goLocation(item.accountId, item.bucketName);
+    selectExplorerItem(item, index, e);
+  };
+  row.ondblclick = () => {
+    if (item.kind === "bucket") return goLocation(item.accountId, item.bucketName);
+    openExplorerItem(item);
+  };
   row.oncontextmenu = (e) => {
     e.preventDefault();
     if (!explorerSelected.has(item.id)) {
@@ -1180,6 +1234,10 @@ function createFileRow(item, index) {
     showExplorerMenu(e.clientX, e.clientY, item);
   };
   row.ondragstart = (e) => {
+    if (item.kind === "bucket") {
+      e.preventDefault();
+      return;
+    }
     if (!explorerSelected.has(item.id)) explorerSelected = new Set([item.id]);
     e.dataTransfer.setData("application/x-redown-items", "1");
   };
@@ -1654,55 +1712,116 @@ function menuButton(label, action, enabled = true) {
 function showExplorerMenu(x, y, item) {
   const menu = $("explorer-menu");
   menu.replaceChildren();
-  const selected = selectedExplorerItems();
-  const hasSelection = selected.length > 0;
+
   const sep = () => {
     const e = document.createElement("div");
     e.className = "menu-separator";
     e.role = "separator";
     menu.append(e);
   };
-  if (item) {
-    if (item.archiveEntry) menu.append(menuButton("Extract", () => extractArchiveSelection(selected)));
+  const section = (text) => {
+    const label = document.createElement("div");
+    label.className = "menu-label";
+    label.textContent = text;
+    menu.append(label);
+  };
+
+  if (item?.kind === "bucket") {
+    const destination = {
+      accountId: item.accountId,
+      bucketName: item.bucketName,
+      accountName: item.accountName,
+      prefix: "",
+    };
     menu.append(
-      menuButton(item.folder ? "Open" : "Open / Preview", () =>
-        openExplorerItem(item),
-      ),
+      menuButton("Open", () => goLocation(item.accountId, item.bucketName)),
+      menuButton("Paste into bucket", () => pasteExplorer(destination), Boolean(explorerClipboard)),
     );
+    sep();
+    menu.append(
+      menuButton("Upload files here", async () => {
+        await goLocation(item.accountId, item.bucketName);
+        $("local-files").click();
+      }),
+      menuButton("Refresh buckets", () => loadExplorerInventory()),
+    );
+    menu.hidden = false;
+    requestAnimationFrame(() => {
+      menu.style.left = `${Math.max(8, Math.min(x, innerWidth - menu.offsetWidth - 8))}px`;
+      menu.style.top = `${Math.max(8, Math.min(y, innerHeight - menu.offsetHeight - 8))}px`;
+      menu.querySelector("button:not(:disabled)")?.focus();
+    });
+    return;
+  }
+
+  const selected = selectedExplorerItems();
+  const hasSelection = selected.length > 0;
+
+  if (item) {
+    if (item.archiveEntry)
+      menu.append(menuButton("Extract", () => extractArchiveSelection(selected)));
+
+    menu.append(
+      menuButton(item.folder ? "Open" : "Open / Preview", () => openExplorerItem(item)),
+    );
+
     if (!item.folder)
       menu.append(
         menuButton("Download", () =>
-          selected.filter((x) => !x.folder).forEach(explorerDownload),
+          selected.filter((entry) => !entry.folder).forEach(explorerDownload),
         ),
       );
+
     sep();
     menu.append(
       menuButton("Cut", () => setExplorerClipboard("move"), hasSelection),
       menuButton("Copy", () => setExplorerClipboard("copy"), hasSelection),
       menuButton(
         "Paste",
-        () =>
-          pasteExplorer(
-            item.folder ? { ...explorerSource(), prefix: item.key } : undefined,
-          ),
+        () => pasteExplorer(item.folder ? { ...explorerSource(), prefix: item.key } : undefined),
         Boolean(explorerClipboard),
       ),
     );
+
     sep();
-    const label = document.createElement("div");
-    label.className = "menu-label";
-    label.textContent = "Send to";
-    menu.append(label);
-    for (const account of explorerAccounts)
+    section("Move to");
+    for (const account of explorerAccounts) {
       for (const bucket of explorerBuckets.get(account.id) || []) {
         if (
+          workspaceTarget &&
           account.id === workspaceTarget.accountId &&
           bucket.name === workspaceTarget.bucketName
-        )
-          continue;
+        ) continue;
         menu.append(
           menuButton(
-            `${account.name} · ${bucket.name}`,
+            account.name + " · " + bucket.name,
+            async () => {
+              await setExplorerClipboard("move");
+              await pasteExplorer({
+                accountId: account.id,
+                bucketName: bucket.name,
+                accountName: account.name,
+                prefix: "",
+              });
+            },
+            hasSelection,
+          ),
+        );
+      }
+    }
+
+    sep();
+    section("Send to");
+    for (const account of explorerAccounts) {
+      for (const bucket of explorerBuckets.get(account.id) || []) {
+        if (
+          workspaceTarget &&
+          account.id === workspaceTarget.accountId &&
+          bucket.name === workspaceTarget.bucketName
+        ) continue;
+        menu.append(
+          menuButton(
+            account.name + " · " + bucket.name,
             async () => {
               await setExplorerClipboard("copy");
               await pasteExplorer({
@@ -1716,15 +1835,14 @@ function showExplorerMenu(x, y, item) {
           ),
         );
       }
+    }
+
     sep();
     menu.append(
-      menuButton(
-        "Rename",
-        () => beginExplorerRename(item),
-        selected.length === 1,
-      ),
+      menuButton("Rename", () => beginExplorerRename(item), selected.length === 1),
       menuButton("Delete", deleteSelection, hasSelection),
     );
+
     if (item.folder)
       menu.append(
         menuButton("New folder", async () => {
@@ -1736,23 +1854,37 @@ function showExplorerMenu(x, y, item) {
           beginNewFolder();
         }),
       );
+
     sep();
-    if (!item.folder && r2Profiles().some(p=>p.accountId===workspaceTarget.accountId&&p.bucketName===workspaceTarget.bucketName&&p.publicAssetsEnabled))
+    if (
+      !item.folder &&
+      workspaceTarget &&
+      r2Profiles().some(
+        (profile) =>
+          profile.accountId === workspaceTarget.accountId &&
+          profile.bucketName === workspaceTarget.bucketName &&
+          profile.publicAssetsEnabled,
+      )
+    )
       menu.append(menuButton("Copy public URL", () => copyItemUrl(item)));
+
     menu.append(
-      menuButton(
-        "Properties",
-        () => showProperties(item),
-        selected.length === 1,
-      ),
+      menuButton("Properties", () => showProperties(item), selected.length === 1),
+      menuButton("Refresh", () => browseWorkspace()),
     );
-  } else
+  } else if (workspaceTarget) {
     menu.append(
       menuButton("Paste", pasteExplorer, Boolean(explorerClipboard)),
       menuButton("New folder", beginNewFolder),
       menuButton("Upload files", () => $("local-files").click()),
       menuButton("Refresh", () => browseWorkspace()),
     );
+  } else {
+    menu.append(
+      menuButton("Refresh buckets", () => loadExplorerInventory()),
+    );
+  }
+
   menu.hidden = false;
   requestAnimationFrame(() => {
     menu.style.left = `${Math.max(8, Math.min(x, innerWidth - menu.offsetWidth - 8))}px`;
@@ -1791,13 +1923,13 @@ function wireWorkspace() {
     drop.ondrop = (e) =>
       explorerUploadFiles(e.dataTransfer?.files, workspacePrefix);
   }
-  $("workspace-refresh").onclick = () => browseWorkspace();
+  $("workspace-refresh").onclick = () => workspaceTarget ? browseWorkspace() : loadExplorerInventory();
   $("workspace-search").oninput = renderFileItems;
   $("preview-expand")?.addEventListener("click", () =>
     setWorkspacePreviewExpanded(!workspacePreviewExpanded),
   );
-  $("explorer-new-folder").onclick = beginNewFolder;
-  $("explorer-upload").onclick = () => picker.click();
+  $("explorer-new-folder").onclick = () => workspaceTarget && beginNewFolder();
+  $("explorer-upload").onclick = () => workspaceTarget && picker.click();
   $("properties-close").onclick = () => $("explorer-properties").close();
   $("explorer-back").onclick = () => navigateHistory(-1);
   $("explorer-forward").onclick = () => navigateHistory(1);
