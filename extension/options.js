@@ -371,21 +371,16 @@ function publicObjectUrl(profile,key){
 function r2Profiles(){return profiles.filter(p=>p.type==="cloudflare-r2");}
 function renderWorkspaceProfiles(){
   const select=$("local-profile");
-  const tools=$("local-tools");
-  if(!select||!tools)return;
-  const r2=r2Profiles();
-  tools.hidden=!r2.length;
-  if(!r2.length){workspaceTarget=null;return;}
+  if(!select)return;
   const previous=select.value;
   select.replaceChildren();
-  for(const profile of r2){
+  for(const profile of r2Profiles()){
     const option=document.createElement("option");
-    option.value=profile.id;
-    option.textContent=`${displayName(profile)} · ${profile.bucketName}`;
-    select.append(option);
+    option.value=profile.id;option.textContent=`${displayName(profile)} · ${profile.bucketName}`;select.append(option);
   }
-  if(r2.some(p=>p.id===previous))select.value=previous;
-  workspaceTarget=r2.find(p=>p.id===select.value)||r2[0];
+  if(Array.from(select.options).some(o=>o.value===previous))select.value=previous;
+  const uploadCard=$("local-dropzone")?.closest(".card");
+  if(uploadCard)uploadCard.hidden=!select.options.length;
 }
 function categoryFromPrefix(prefix){
   const first=String(prefix||"").split("/").filter(Boolean)[0]?.toLowerCase();
@@ -397,7 +392,7 @@ function categoryFromPrefix(prefix){
 async function uploadLocalFiles(fileList){
   const files=Array.from(fileList||[]);
   if(!files.length)return;
-  const profile=workspaceTarget;
+  const profile=profiles.find(p=>p.id===$("local-profile").value);
   if(!profile)return setStatus("local-upload-status","Choose an R2 bucket first.","bad");
   const prefix=$("local-prefix").value.trim();
   const status=$("local-upload-status");
@@ -447,8 +442,7 @@ async function uploadLocalFiles(fileList){
     }
   }
   await renderHistory();
-  $("workspace-prefix").value=prefix;
-  await browseWorkspace();
+  if(workspaceTarget?.accountId===profile.accountId&&workspaceTarget?.bucketName===profile.bucketName){workspacePrefix=normalizePrefix(prefix);await browseWorkspace();}
 }
 function objectContentType(obj,key){
   const explicit=String(obj?.httpMetadata?.contentType||obj?.contentType||"").toLowerCase();
@@ -500,7 +494,8 @@ async function showWorkspacePreview(obj,row){
   document.querySelectorAll("#workspace-objects .object.active").forEach(el=>el.classList.remove("active"));
   row?.classList.add("active");
   const key=obj.key||obj.name||String(obj);
-  const url=publicObjectUrl(workspaceTarget,key);
+  const previewProfile=r2Profiles().find(p=>p.accountId===workspaceTarget?.accountId&&p.bucketName===workspaceTarget?.bucketName);
+  const url=previewProfile?publicObjectUrl(previewProfile,key):"";
   const type=objectContentType(obj,key);
 
   const head=document.createElement("div");
@@ -515,6 +510,11 @@ async function showWorkspacePreview(obj,row){
   expand.addEventListener("click",()=>setWorkspacePreviewExpanded(!workspacePreviewExpanded));
   head.append(title,expand);
   root.append(head);
+  if(!previewProfile){
+    const note=document.createElement("div");note.className="meta";note.textContent="Preview and download become available after this bucket is prepared as a REDOWN destination.";root.append(note);
+    const details=document.createElement("div");details.className="preview-details";
+    [["Type",type],["Size",formatBytes(obj?.size)],["Uploaded",obj?.uploaded||obj?.uploadedAt||obj?.created||"—"],["Key",key]].forEach(([label,value])=>{const a=document.createElement("div");a.textContent=label;const b=document.createElement("div");b.textContent=String(value);details.append(a,b);});root.append(details);return;
+  }
 
   const media=document.createElement("div");
   media.className="preview-media";
@@ -568,77 +568,153 @@ async function showWorkspacePreview(obj,row){
 
 function setWorkspacePreviewExpanded(expanded){
   workspacePreviewExpanded=Boolean(expanded);
-  const grid=document.querySelector(".workspace-grid");
+  const grid=document.querySelector(".explorer-body");
   grid?.classList.toggle("expanded",workspacePreviewExpanded);
   const button=$("#preview-expand")||document.querySelector("#workspace-preview .preview-head button");
   if(button)button.textContent=workspacePreviewExpanded?"Collapse":"Expand";
 }
 
-async function browseWorkspace(){
+let explorerAccounts=[];
+let explorerBuckets=new Map();
+let workspacePrefix="";
+let explorerItems=[];
+let explorerSelected=new Set();
+let explorerAnchor=-1;
+let explorerHistory=[];
+let explorerHistoryIndex=-1;
+let explorerClipboard=null;
+let explorerSort={field:"name",direction:1};
+
+function normalizePrefix(value){const clean=String(value||"").replace(/^\/+|\/+$/g,"");return clean?`${clean}/`:"";}
+function accountName(id){return explorerAccounts.find(a=>a.id===id)?.name||id||"Account";}
+function itemType(key){const name=key.split("/").pop()||key;const dot=name.lastIndexOf(".");return dot>0?name.slice(dot+1).toUpperCase()+" file":"File";}
+function itemDate(obj){const value=obj?.uploaded||obj?.uploadedAt||obj?.created||obj?.lastModified;return value?new Date(value):null;}
+function buildDirectoryItems(objects,prefix){
+  const folders=new Map(),files=[];
+  for(const object of objects||[]){
+    const key=object.key||object.name||"";
+    if(!key||key.endsWith("/.redown")||key===".redown"||!key.startsWith(prefix))continue;
+    const relative=key.slice(prefix.length);if(!relative)continue;
+    const slash=relative.indexOf("/");
+    if(slash>=0){const name=relative.slice(0,slash);if(name)folders.set(name,{id:`folder:${prefix}${name}/`,name,key:`${prefix}${name}/`,folder:true,size:null,modified:null,type:"Folder"});}
+    else files.push({id:`file:${key}`,name:relative,key,folder:false,size:Number(object.size||0),modified:itemDate(object),type:itemType(key),object});
+  }
+  return [...folders.values(),...files];
+}
+function sortedVisibleItems(){
+  const query=$("workspace-search")?.value.trim().toLocaleLowerCase()||"";
+  return explorerItems.filter(x=>!query||x.name.toLocaleLowerCase().includes(query)).sort((a,b)=>{
+    if(a.folder!==b.folder)return a.folder?-1:1;
+    let av=a[explorerSort.field],bv=b[explorerSort.field];
+    if(explorerSort.field==="modified"){av=av?.getTime()||0;bv=bv?.getTime()||0;}
+    if(typeof av==="number")return (av-bv)*explorerSort.direction;
+    return String(av||"").localeCompare(String(bv||""),undefined,{numeric:true,sensitivity:"base"})*explorerSort.direction;
+  });
+}
+function rememberLocation(replace=false){
   if(!workspaceTarget)return;
-  const root=$("workspace-objects");
-  root.replaceChildren();
-  const prefix=$("workspace-prefix").value.trim();
-  const result=await send({
-    type:"cfObjects",
-    accountId:workspaceTarget.accountId,
-    bucketName:workspaceTarget.bucketName,
-    prefix
-  });
-  if(!result?.ok){
-    const e=document.createElement("div");e.className="object";e.textContent=result?.error||"Could not browse bucket";root.append(e);return;
-  }
-  workspaceObjects=(result.objects||[]).filter(obj=>{
-    const key=obj.key||obj.name||"";
-    return key&&!key.endsWith("/.redown");
-  });
-  if(!workspaceObjects.length){
-    const e=document.createElement("div");e.className="object";e.textContent="No objects under this prefix.";root.append(e);
-    const preview=$("workspace-preview");
-    preview.replaceChildren();
-    const head=document.createElement("div");head.className="preview-head";
-    const note=document.createElement("div");note.className="meta";note.textContent="Nothing to preview here yet.";
-    const expand=document.createElement("button");expand.className="ghost";expand.type="button";expand.textContent=workspacePreviewExpanded?"Collapse":"Expand";
-    expand.addEventListener("click",()=>setWorkspacePreviewExpanded(!workspacePreviewExpanded));
-    head.append(note,expand);preview.append(head);
-    return;
-  }
-  for(const obj of workspaceObjects.slice(0,300)){
-    const key=obj.key||obj.name||String(obj);
-    const row=document.createElement("div");
-    row.className="object";
-    row.textContent=`${key} · ${formatBytes(obj.size)}`;
-    row.addEventListener("click",()=>showWorkspacePreview(obj,row));
-    root.append(row);
-  }
+  const location={accountId:workspaceTarget.accountId,bucketName:workspaceTarget.bucketName,prefix:workspacePrefix};
+  if(replace&&explorerHistoryIndex>=0)explorerHistory[explorerHistoryIndex]=location;
+  else{explorerHistory=explorerHistory.slice(0,explorerHistoryIndex+1);explorerHistory.push(location);explorerHistoryIndex=explorerHistory.length-1;}
+  updateNavButtons();
 }
+async function goLocation(accountId,bucketName,prefix="",remember=true){
+  const bucket=(explorerBuckets.get(accountId)||[]).find(b=>b.name===bucketName);
+  workspaceTarget={accountId,bucketName,accountName:accountName(accountId),bucket};workspacePrefix=normalizePrefix(prefix);
+  if($("local-prefix"))$("local-prefix").value=workspacePrefix.replace(/\/$/,"");
+  const uploadProfile=r2Profiles().find(p=>p.accountId===accountId&&p.bucketName===bucketName);if(uploadProfile&&$("local-profile"))$("local-profile").value=uploadProfile.id;
+  if($("explorer-location"))$("explorer-location").value=`${accountId}|${bucketName}`;
+  explorerSelected.clear();explorerAnchor=-1;$("workspace-search").value="";
+  if(remember)rememberLocation();
+  renderExplorerChrome();await browseWorkspace();
+}
+function updateNavButtons(){
+  $("explorer-back").disabled=explorerHistoryIndex<=0;$("explorer-forward").disabled=explorerHistoryIndex>=explorerHistory.length-1;
+  $("explorer-up").disabled=!workspaceTarget||!workspacePrefix;
+}
+function renderExplorerChrome(){
+  const crumbs=$("explorer-breadcrumbs");crumbs.replaceChildren();
+  const parts=[{label:"Cloudflare"},{label:accountName(workspaceTarget?.accountId)},{label:workspaceTarget?.bucketName}];
+  let cumulative="";
+  for(const part of workspacePrefix.split("/").filter(Boolean)){cumulative+=part+"/";parts.push({label:part,prefix:cumulative});}
+  parts.filter(x=>x.label).forEach((part,index)=>{const button=document.createElement("button");button.className="crumb";button.textContent=part.label;button.addEventListener("click",()=>{if(index===0)return loadExplorerInventory();if(index===1){const first=(explorerBuckets.get(workspaceTarget.accountId)||[])[0];if(first)goLocation(workspaceTarget.accountId,first.name);return;}goLocation(workspaceTarget.accountId,workspaceTarget.bucketName,part.prefix||"");});crumbs.append(button);});
+  document.querySelectorAll(".source-item").forEach(el=>el.classList.toggle("active",el.dataset.account===workspaceTarget?.accountId&&el.dataset.bucket===workspaceTarget?.bucketName));
+  updateNavButtons();
+}
+function renderSources(){
+  const root=$("explorer-sources"),mobile=$("explorer-location");root.replaceChildren();mobile.replaceChildren();
+  for(const account of explorerAccounts){
+    const group=document.createElement("div");group.className="account-group";
+    const label=document.createElement("div");label.className="account-label";label.textContent=account.name||account.id;group.append(label);
+    for(const bucket of explorerBuckets.get(account.id)||[]){
+      const button=document.createElement("button");button.className="source-item";button.dataset.account=account.id;button.dataset.bucket=bucket.name;
+      const icon=document.createElement("span");icon.textContent="◼";const name=document.createElement("span");name.textContent=bucket.name;button.append(icon,name);button.addEventListener("click",()=>goLocation(account.id,bucket.name));group.append(button);
+      const option=document.createElement("option");option.value=`${account.id}|${bucket.name}`;option.textContent=`${account.name} / ${bucket.name}`;mobile.append(option);
+    }root.append(group);
+  }
+  mobile.onchange=()=>{const [accountId,bucketName]=mobile.value.split("|");goLocation(accountId,bucketName);};renderExplorerChrome();
+}
+async function loadExplorerInventory(){
+  const accountsResult=await send({type:"cfAccounts"});if(!accountsResult?.ok)throw new Error(accountsResult?.error||"Could not load accounts");
+  explorerAccounts=accountsResult.accounts||[];explorerBuckets.clear();
+  await Promise.all(explorerAccounts.map(async account=>{const result=await send({type:"cfBuckets",accountId:account.id});explorerBuckets.set(account.id,result?.ok?(result.buckets||[]):[]);}));
+  renderSources();
+  if(!workspaceTarget){const account=explorerAccounts.find(a=>(explorerBuckets.get(a.id)||[]).length);const bucket=account&&(explorerBuckets.get(account.id)||[])[0];if(bucket)await goLocation(account.id,bucket.name);else renderFileItems();}
+}
+async function browseWorkspace(){
+  const root=$("workspace-objects");if(!workspaceTarget){renderFileItems();return;}
+  root.innerHTML='<div class="file-empty"><strong>Loading folder…</strong>Fetching objects from Cloudflare R2</div>';$("explorer-status").textContent="";
+  const result=await send({type:"cfObjects",accountId:workspaceTarget.accountId,bucketName:workspaceTarget.bucketName,prefix:workspacePrefix});
+  if(!result?.ok){explorerItems=[];$("explorer-status").textContent=result?.error||"Could not browse this bucket";}else explorerItems=buildDirectoryItems(result.objects,workspacePrefix);
+  explorerSelected.clear();renderFileItems();renderExplorerChrome();
+}
+function renderFileItems(){
+  const root=$("workspace-objects");root.replaceChildren();const items=sortedVisibleItems();
+  if(!workspaceTarget){root.innerHTML='<div class="file-empty"><strong>No storage locations</strong>Connect Cloudflare or create an R2 bucket to begin.</div>';}
+  else if(!items.length){root.innerHTML=`<div class="file-empty"><strong>${explorerItems.length?"No search results":"This folder is empty"}</strong>${explorerItems.length?"Try a different search.":"Drop files here or use Upload files to add something."}</div>`;}
+  items.forEach((item,index)=>{
+    const row=document.createElement("div");row.className=`file-row${item.folder?" folder":""}${explorerSelected.has(item.id)?" selected":""}`;row.dataset.id=item.id;row.tabIndex=-1;row.setAttribute("role","row");
+    const name=document.createElement("div");name.className="file-cell file-name";const icon=document.createElement("span");icon.className="file-icon";icon.textContent=item.folder?"◆":"▤";const text=document.createElement("span");text.textContent=item.name;name.append(icon,text);
+    const size=document.createElement("div");size.className="file-cell file-muted";size.textContent=item.folder?"—":formatBytes(item.size);
+    const modified=document.createElement("div");modified.className="file-cell file-muted";modified.textContent=item.modified?item.modified.toLocaleString():"—";
+    const type=document.createElement("div");type.className="file-cell file-muted";type.textContent=item.type;
+    row.append(name,size,modified,type);row.addEventListener("click",e=>selectExplorerItem(item,index,e));row.addEventListener("dblclick",()=>openExplorerItem(item));row.addEventListener("contextmenu",e=>{e.preventDefault();if(!explorerSelected.has(item.id)){explorerSelected=new Set([item.id]);renderFileItems();}showExplorerMenu(e.clientX,e.clientY,item);});root.append(row);
+  });
+  root.oncontextmenu=e=>{if(e.target===root){e.preventDefault();showExplorerMenu(e.clientX,e.clientY,null);}};
+  $("explorer-count").textContent=workspaceTarget?`${items.length} item${items.length===1?"":"s"}`:"No location selected";
+  $("explorer-selection").textContent=explorerSelected.size?`${explorerSelected.size} selected`:"";
+}
+function selectExplorerItem(item,index,event={}){
+  const items=sortedVisibleItems();
+  if(event.shiftKey&&explorerAnchor>=0){const [a,b]=[explorerAnchor,index].sort((x,y)=>x-y);if(!event.ctrlKey&&!event.metaKey)explorerSelected.clear();items.slice(a,b+1).forEach(x=>explorerSelected.add(x.id));}
+  else if(event.ctrlKey||event.metaKey){explorerSelected.has(item.id)?explorerSelected.delete(item.id):explorerSelected.add(item.id);explorerAnchor=index;}
+  else{explorerSelected=new Set([item.id]);explorerAnchor=index;}
+  renderFileItems();if(!item.folder&&explorerSelected.size===1){const row=rootRow(item.id);showWorkspacePreview(item.object,row);}
+}
+function rootRow(id){return Array.from(document.querySelectorAll("#workspace-objects .file-row")).find(x=>x.dataset.id===id);}
+function openExplorerItem(item){if(item.folder)return goLocation(workspaceTarget.accountId,workspaceTarget.bucketName,item.key);showWorkspacePreview(item.object,rootRow(item.id));}
+function selectedExplorerItems(){return explorerItems.filter(x=>explorerSelected.has(x.id));}
+function downloadItem(item){if(item.folder)return;const profile=r2Profiles().find(p=>p.accountId===workspaceTarget.accountId&&p.bucketName===workspaceTarget.bucketName);if(!profile)return;const a=document.createElement("a");a.href=publicObjectUrl(profile,item.key);a.download=item.name;a.click();}
+function copyItemUrl(item){const profile=r2Profiles().find(p=>p.accountId===workspaceTarget.accountId&&p.bucketName===workspaceTarget.bucketName);if(profile&&!item.folder)navigator.clipboard.writeText(publicObjectUrl(profile,item.key));}
+function menuButton(label,action,enabled=true){const b=document.createElement("button");b.className="menu-item";b.textContent=label;b.disabled=!enabled;b.onclick=()=>{hideExplorerMenu();action?.();};return b;}
+function showExplorerMenu(x,y,item){
+  const menu=$("explorer-menu");menu.replaceChildren();const selected=selectedExplorerItems();const provisioned=r2Profiles().some(p=>p.accountId===workspaceTarget?.accountId&&p.bucketName===workspaceTarget?.bucketName);
+  const sep=()=>{const e=document.createElement("div");e.className="menu-separator";menu.append(e);};
+  if(item){menu.append(menuButton(item.folder?"Open":"Open / Preview",()=>openExplorerItem(item)),menuButton("Download",()=>selected.forEach(downloadItem),!item.folder&&provisioned));sep();menu.append(menuButton("Cut",()=>setExplorerClipboard("move")),menuButton("Copy",()=>setExplorerClipboard("copy")),menuButton("Paste",null,false));sep();menu.append(menuButton("Rename",null,false),menuButton("Delete",null,false));sep();if(!item.folder)menu.append(menuButton("Copy URL",()=>copyItemUrl(item),provisioned));menu.append(menuButton("Properties",()=>showWorkspacePreview(item.object,rootRow(item.id)),!item.folder));}
+  else{menu.append(menuButton("Paste",null,false),menuButton("New folder",null,false),menuButton("Upload files",()=>$("local-files").click(),provisioned),menuButton("Refresh",browseWorkspace));}
+  menu.hidden=false;menu.style.left=`${Math.min(x,innerWidth-210)}px`;menu.style.top=`${Math.min(y,innerHeight-menu.offsetHeight-10)}px`;
+}
+function setExplorerClipboard(operation){const items=selectedExplorerItems();explorerClipboard={operation,accountId:workspaceTarget.accountId,bucketName:workspaceTarget.bucketName,keys:items.map(x=>x.key)};}
+function hideExplorerMenu(){$("explorer-menu").hidden=true;}
 function wireWorkspace(){
-  const select=$("local-profile");
-  if(!select)return;
-  select.addEventListener("change",async()=>{
-    workspaceTarget=profiles.find(p=>p.id===select.value)||null;
-    if(workspaceTarget){
-      $("workspace-prefix").value="";
-      await browseWorkspace();
-    }
-  });
-  const drop=$("local-dropzone");
-  const picker=$("local-files");
-  drop.addEventListener("click",()=>picker.click());
-  drop.addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();picker.click();}});
-  picker.addEventListener("change",async()=>{await uploadLocalFiles(picker.files);picker.value="";});
-  for(const eventName of ["dragenter","dragover"]){
-    drop.addEventListener(eventName,e=>{e.preventDefault();drop.classList.add("drag");});
-  }
-  for(const eventName of ["dragleave","drop"]){
-    drop.addEventListener(eventName,e=>{e.preventDefault();drop.classList.remove("drag");});
-  }
-  drop.addEventListener("drop",e=>uploadLocalFiles(e.dataTransfer?.files));
-  $("workspace-browse").addEventListener("click",browseWorkspace);
-  $("workspace-refresh").addEventListener("click",browseWorkspace);
-  $("workspace-prefix").addEventListener("keydown",e=>{if(e.key==="Enter")browseWorkspace();});
-  $("preview-expand")?.addEventListener("click",()=>setWorkspacePreviewExpanded(!workspacePreviewExpanded));
+  const drop=$("local-dropzone"),picker=$("local-files");if(drop&&picker){drop.addEventListener("click",()=>picker.click());drop.addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();picker.click();}});picker.addEventListener("change",async()=>{await uploadLocalFiles(picker.files);picker.value="";});for(const n of ["dragenter","dragover"])drop.addEventListener(n,e=>{e.preventDefault();drop.classList.add("drag");});for(const n of ["dragleave","drop"])drop.addEventListener(n,e=>{e.preventDefault();drop.classList.remove("drag");});drop.addEventListener("drop",e=>uploadLocalFiles(e.dataTransfer?.files));}
+  $("workspace-refresh").addEventListener("click",browseWorkspace);$("workspace-search").addEventListener("input",renderFileItems);$("preview-expand")?.addEventListener("click",()=>setWorkspacePreviewExpanded(!workspacePreviewExpanded));
+  $("explorer-back").onclick=()=>navigateHistory(-1);$("explorer-forward").onclick=()=>navigateHistory(1);$("explorer-up").onclick=()=>{const parts=workspacePrefix.split("/").filter(Boolean);parts.pop();goLocation(workspaceTarget.accountId,workspaceTarget.bucketName,parts.join("/"));};
+  document.querySelectorAll(".file-head button").forEach(b=>b.onclick=()=>{const field=b.dataset.sort;explorerSort=explorerSort.field===field?{field,direction:-explorerSort.direction}:{field,direction:1};renderFileItems();});
+  document.addEventListener("click",e=>{if(!e.target.closest("#explorer-menu"))hideExplorerMenu();});
+  $("explorer").addEventListener("keydown",e=>{const selected=selectedExplorerItems();if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==="a"){e.preventDefault();explorerSelected=new Set(sortedVisibleItems().map(x=>x.id));renderFileItems();}else if(e.key==="Enter"&&selected.length===1)openExplorerItem(selected[0]);else if(e.key==="Escape"){hideExplorerMenu();explorerSelected.clear();renderFileItems();}else if(e.key==="Backspace"||(e.altKey&&e.key==="ArrowLeft")){e.preventDefault();if(explorerHistoryIndex>0)navigateHistory(-1);}else if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==="c")setExplorerClipboard("copy");else if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==="x")setExplorerClipboard("move");});
 }
+async function navigateHistory(delta){const next=explorerHistoryIndex+delta;if(next<0||next>=explorerHistory.length)return;explorerHistoryIndex=next;const loc=explorerHistory[next];await goLocation(loc.accountId,loc.bucketName,loc.prefix,false);updateNavButtons();}
 
 function transferKey(profile, location){
   try{
@@ -710,8 +786,7 @@ async function openTransferLocation(item,parts){
     select.value=parts.profile.id;
     workspaceTarget=parts.profile;
   }
-  $("workspace-prefix").value=folder;
-  await browseWorkspace();
+  await goLocation(parts.profile.accountId,parts.profile.bucketName,folder);
   $("local-tools")?.scrollIntoView({behavior:"smooth",block:"start"});
 }
 async function beginRename(item,parts,nameEl,cell){
@@ -853,6 +928,7 @@ async function refreshCloudflare(){
   $("connect-cloudflare").hidden=connected;
   $("disconnect-cloudflare").hidden=!connected;
   $("cloudflare-panel").hidden=!connected;
+  $("local-tools").hidden=!connected;
   if(!connected)return;
 
   setStatus("hero-status","Cloudflare connected.","ok");
@@ -968,7 +1044,9 @@ window.addEventListener("focus",refreshDownloadsOnAccess);
   renderProfiles();
   wireWorkspace();
   renderWorkspaceProfiles();
-  if(workspaceTarget)await browseWorkspace();
   await refreshCloudflare();
+  const auth=(await chrome.storage.local.get("cloudflareAuth")).cloudflareAuth;
+  $("local-tools").hidden=!auth?.accessToken;
+  if(auth?.accessToken)await loadExplorerInventory().catch(error=>{$("explorer-status").textContent=error.message;});
   await renderHistory();
 })();
