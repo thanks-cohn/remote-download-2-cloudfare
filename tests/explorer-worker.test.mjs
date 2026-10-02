@@ -144,9 +144,10 @@ test("short-lived private preview URLs support ranges for text, PDF, and GLB", a
 
 test("ZIP and CBZ archives are listed as virtual folders and selected entries extract safely", async () => {
   const worker = (await workerModule()).default, bucket = new MemoryBucket();
-  await bucket.put("comic.cbz", storedZip([["cover.jpg","cover"],["pages/001.jpg","one"],["notes.txt","hello"]]));
+  await bucket.put("comic.cbz", storedZip([["cover.jpg","cover"],["pages/",""],["pages/001.jpg","one"],["notes.txt","hello"]]));
   let result = await (await worker.fetch(manageRequest({ action:"listArchive", key:"comic.cbz" }), { STORAGE:bucket })).json();
-  assert.equal(result.archive.type, "cbz"); assert.deepEqual(result.archive.entries.map(x => x.name), ["cover.jpg","pages/001.jpg","notes.txt"]);
+  assert.equal(result.archive.type, "cbz"); assert.deepEqual(result.archive.entries.map(x => x.name), ["cover.jpg","pages/","pages/001.jpg","notes.txt"]);
+  assert.equal(result.archive.entries.find(x => x.name === "pages/")?.directory, true);
   result = await (await worker.fetch(manageRequest({ action:"extractArchiveEntries", key:"comic.cbz", entries:["pages/001.jpg"], destinationPrefix:"project" }), { STORAGE:bucket })).json();
   assert.equal(result.results[0].status, "extracted"); assert.equal(new TextDecoder().decode((await bucket.get("project/pages/001.jpg")).bytes), "one");
   const preview = await (await worker.fetch(manageRequest({ action:"createArchiveEntryReadUrl", key:"comic.cbz", entry:"notes.txt", contentType:"text/plain" }), { STORAGE:bucket })).json();
