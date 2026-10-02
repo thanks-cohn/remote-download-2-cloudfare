@@ -520,6 +520,83 @@ Use that expectation unless R2 makes it impossible.
 
 If R2 imposes an unusual internal implementation, hide that complexity behind the conventional interaction whenever possible.
 
+
+
+## Provisioning / propagation waiting state
+
+There is an important current UX problem after a fresh Cloudflare login or when a user clicks a bucket that is only just becoming usable.
+
+The bucket/Worker path may take several minutes to become reachable or fully authorized from the browser. During that window, the current experience can surface **Unauthorized** even though the setup is still propagating and later succeeds.
+
+Do not present this temporary propagation state as a failure.
+
+### Required behavior
+
+When a newly connected or newly prepared bucket is not yet reachable:
+
+- enter a visible **Preparing / Connecting / Finishing setup** state
+- keep the user on the current screen
+- disable only actions that truly cannot run yet
+- show an indeterminate progress indicator or calm progress status
+- retry automatically with backoff
+- distinguish temporary 401/403/route/DNS/Worker-readiness responses from a confirmed invalid-auth state
+- keep retrying for the existing provisioning window or a reasonable bounded period
+- if the operation eventually succeeds, transition directly into the bucket Explorer without requiring another click
+- only show a hard failure after the retry/provisioning window is exhausted or when the API returns a clearly terminal authorization error
+
+Suggested user-facing copy:
+
+```text
+Preparing this bucket…
+Cloudflare is finishing setup. This can take a few minutes.
+```
+
+Optional secondary copy:
+
+```text
+You can leave this open. REDOWN will continue checking automatically.
+```
+
+Do not show raw messages such as:
+
+```text
+Unauthorized
+401
+Worker unavailable
+DNS error
+```
+
+during the expected propagation window.
+
+If a true terminal failure occurs, show a useful final error with a retry action and concise diagnostics.
+
+### State model
+
+Prefer an explicit state machine such as:
+
+```text
+idle
+connecting
+provisioning
+propagating
+ready
+failed
+```
+
+Avoid deriving the UX directly from one transient HTTP response.
+
+### UX goal
+
+The user should think:
+
+> REDOWN is still finishing setup.
+
+not:
+
+> My login failed.
+
+This is especially important immediately after OAuth connection and the first time a bucket is opened or prepared.
+
 ## Validation
 
 Before completion, test or reason through at least these scenarios:
