@@ -172,9 +172,12 @@ async function objectBytes(storage, key, offset, length) {
   return new Uint8Array(await new Response(object.body).arrayBuffer());
 }
 function safeArchiveName(name) {
-  const normalized = String(name || "").replace(/\\\\/g, "/").replace(/^\\.\\//, "");
-  if (!normalized || normalized.startsWith("/") || /^[a-z]:\\//i.test(normalized) || normalized.split("/").some(part => !part || part === "." || part === ".." || part.includes("\\0"))) throw new Error("Archive contains an unsafe path");
-  if (normalized.split("/").length > 64) throw new Error("Archive path is too deep");
+  const normalized = String(name || "").replace(/\\/g, "/").replace(/^\.\//, "");
+  const directory = normalized.endsWith("/");
+  const parts = normalized.split("/");
+  if (directory) parts.pop();
+  if (!normalized || normalized.startsWith("/") || /^[a-z]:\//i.test(normalized) || !parts.length || parts.some(part => !part || part === "." || part === ".." || part.includes("\0"))) throw new Error("Archive contains an unsafe path");
+  if (parts.length > 64) throw new Error("Archive path is too deep");
   return normalized;
 }
 async function archiveEntries(storage, key) {
