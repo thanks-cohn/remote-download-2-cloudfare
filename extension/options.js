@@ -5,6 +5,7 @@ let currentAccountId="";
 let workspaceTarget=null;
 let workspaceObjects=[];
 let workspacePreviewExpanded=false;
+let workspacePreviewLightbox=false;
 
 function uid(){return crypto.randomUUID();}
 function setStatus(id,msg,kind=""){const el=$(id);el.textContent=msg||"";el.className="status"+(kind?" "+kind:"");}
@@ -523,8 +524,9 @@ async function showWorkspacePreview(obj,row,urlOverride=""){
   const controls=document.createElement("div");controls.className="preview-nav";
   const previous=document.createElement("button");previous.className="ghost preview-arrow";previous.type="button";previous.setAttribute("aria-label","Previous file");previous.title="Previous file";previous.textContent="←";previous.addEventListener("click",()=>navigatePreview(-1));
   const next=document.createElement("button");next.className="ghost preview-arrow";next.type="button";next.setAttribute("aria-label","Next file");next.title="Next file";next.textContent="→";next.addEventListener("click",()=>navigatePreview(1));
+  const lightbox=document.createElement("button");lightbox.className="ghost";lightbox.type="button";lightbox.textContent=workspacePreviewLightbox?"Close lightbox":"Lightbox";lightbox.addEventListener("click",()=>setWorkspacePreviewLightbox(!workspacePreviewLightbox));
   const expand=document.createElement("button");expand.className="ghost";expand.type="button";expand.textContent=workspacePreviewExpanded?"Collapse":"Expand";expand.addEventListener("click",()=>setWorkspacePreviewExpanded(!workspacePreviewExpanded));
-  controls.append(previous,next,expand);
+  controls.append(previous,next,lightbox,expand);
   head.append(title,controls);root.append(head);
 
   const media=document.createElement("div");
@@ -586,12 +588,45 @@ async function showWorkspacePreview(obj,row,urlOverride=""){
 
 function setWorkspacePreviewExpanded(expanded){
   workspacePreviewExpanded=Boolean(expanded);
+  if (workspacePreviewExpanded && workspacePreviewLightbox)
+    setWorkspacePreviewLightbox(false);
   const grid=document.querySelector(".explorer-body");
   grid?.classList.toggle("expanded",workspacePreviewExpanded);
   if (workspacePreviewExpanded) $("explorer")?.focus?.({ preventScroll:true });
-  const button=$("#preview-expand")||document.querySelector("#workspace-preview .preview-head button");
+  const button=$("#preview-expand")||document.querySelector("#workspace-preview .preview-head button:last-child");
   if(button)button.textContent=workspacePreviewExpanded?"Collapse":"Expand";
 }
+function setWorkspacePreviewLightbox(enabled){
+  workspacePreviewLightbox=Boolean(enabled);
+  if (workspacePreviewLightbox && workspacePreviewExpanded) {
+    workspacePreviewExpanded=false;
+    document.querySelector(".explorer-body")?.classList.remove("expanded");
+  }
+
+  const preview=$("#workspace-preview");
+  preview?.classList.toggle("lightbox",workspacePreviewLightbox);
+  document.body.classList.toggle("preview-lightbox-open",workspacePreviewLightbox);
+
+  let backdrop=document.querySelector(".preview-lightbox-backdrop");
+  if (workspacePreviewLightbox) {
+    if (!backdrop) {
+      backdrop=document.createElement("div");
+      backdrop.className="preview-lightbox-backdrop";
+      backdrop.setAttribute("aria-hidden","true");
+      backdrop.addEventListener("click",()=>setWorkspacePreviewLightbox(false));
+      document.body.append(backdrop);
+    }
+    $("explorer")?.focus?.({ preventScroll:true });
+  } else {
+    backdrop?.remove();
+  }
+
+  const button=$("#preview-lightbox")||Array.from(document.querySelectorAll("#workspace-preview .preview-head button")).find((el)=>/lightbox/i.test(el.textContent));
+  if(button)button.textContent=workspacePreviewLightbox?"Close lightbox":"Lightbox";
+  const expand=$("#preview-expand")||document.querySelector("#workspace-preview .preview-head button:last-child");
+  if(expand)expand.textContent=workspacePreviewExpanded?"Collapse":"Expand";
+}
+
 
 let explorerAccounts = [];
 let explorerBuckets = new Map();
@@ -1319,8 +1354,9 @@ async function previewExplorerItem(item) {
     const head=document.createElement("div");head.className="preview-head";
     const title=document.createElement("div");title.className="preview-title";title.textContent=item.name;
     const controls=document.createElement("div");controls.className="preview-nav";
+    const lightbox=document.createElement("button");lightbox.className="ghost";lightbox.type="button";lightbox.textContent=workspacePreviewLightbox?"Close lightbox":"Lightbox";lightbox.addEventListener("click",()=>setWorkspacePreviewLightbox(!workspacePreviewLightbox));
     const expand=document.createElement("button");expand.className="ghost";expand.type="button";expand.textContent=workspacePreviewExpanded?"Collapse":"Expand";expand.addEventListener("click",()=>setWorkspacePreviewExpanded(!workspacePreviewExpanded));
-    controls.append(expand);head.append(title,controls);
+    controls.append(lightbox,expand);head.append(title,controls);
     const note=document.createElement("div");note.className="preview-folder";note.innerHTML=iconSvg("folder")+"<strong>Folder</strong><span>Press Enter to open this folder.</span>";
     root.append(head,note);
     return;
@@ -2016,6 +2052,9 @@ function wireWorkspace() {
   $("preview-expand")?.addEventListener("click", () =>
     setWorkspacePreviewExpanded(!workspacePreviewExpanded),
   );
+  $("preview-lightbox")?.addEventListener("click", () =>
+    setWorkspacePreviewLightbox(!workspacePreviewLightbox),
+  );
   $("explorer-new-folder").onclick = () => workspaceTarget && beginNewFolder();
   $("explorer-upload").onclick = () => workspaceTarget && picker.click();
   $("properties-close").onclick = () => $("explorer-properties").close();
@@ -2092,7 +2131,10 @@ function wireWorkspace() {
       navigatePreview(-1);
     } else if (e.key === "Escape") {
       hideExplorerMenu();
-      if (workspacePreviewExpanded) {
+      if (workspacePreviewLightbox) {
+        e.preventDefault();
+        setWorkspacePreviewLightbox(false);
+      } else if (workspacePreviewExpanded) {
         e.preventDefault();
         setWorkspacePreviewExpanded(false);
       } else {
