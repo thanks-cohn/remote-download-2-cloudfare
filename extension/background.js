@@ -1257,6 +1257,28 @@ async function listAllObjects(accountId, bucketName, prefix = "") {
   }
   return objects;
 }
+async function listFolderPrefixes(accountId, bucketName, limit = 5000) {
+  const objects = await listAllObjects(accountId, bucketName, "");
+  const prefixes = new Set([""]);
+  for (const object of objects) {
+    const key = String(object.key || object.name || "");
+    if (!key) continue;
+    const parts = key.split("/").filter(Boolean);
+    // Files contribute each parent path; R2 folder markers contribute their folder too.
+    const isMarker = parts[parts.length - 1] === ".redown";
+    const depth = isMarker ? parts.length - 1 : Math.max(0, parts.length - 1);
+    let current = "";
+    for (let i = 0; i < depth; i++) {
+      current += (current ? "/" : "") + parts[i];
+      prefixes.add(current);
+      if (prefixes.size >= limit) break;
+    }
+    if (prefixes.size >= limit) break;
+  }
+  return Array.from(prefixes).sort((a, b) =>
+    a.localeCompare(b, undefined, { numeric:true, sensitivity:"base" })
+  );
+}
 function cleanExplorerPrefix(value) {
   const parts = String(value || "").split("/").filter(Boolean);
   if (parts.some(part => part === "." || part === ".." || /[\\\0]/.test(part))) throw new Error("That location is not valid");
@@ -1709,6 +1731,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         return sendResponse({ ok:true, ...(await configureAssetDomain(message.accountId,message.bucketName,message.website)) });
       }
       if (message?.type === "cfObjects") return sendResponse({ ok:true, ...(await listObjects(message.accountId,message.bucketName,message.prefix,message.cursor)) });
+      if (message?.type === "cfFolderPrefixes") return sendResponse({ ok:true, prefixes:await listFolderPrefixes(message.accountId,message.bucketName,message.limit || 5000) });
       if (message?.type === "cfPrepareBucket") return sendResponse({ ok:true, profile:await preparedProfile(message.accountId,message.bucketName,message.accountName) });
       if (message?.type === "cfTransferObjects") return sendResponse({ ok:true, ...(await transferExplorerObjects(message)) });
       if (message?.type === "cfDeleteObjects") return sendResponse({ ok:true, ...(await deleteExplorerObjects(message)) });
