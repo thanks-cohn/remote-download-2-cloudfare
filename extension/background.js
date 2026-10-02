@@ -1257,6 +1257,76 @@ async function listAllObjects(accountId, bucketName, prefix = "") {
   }
   return objects;
 }
+function explorerSearchScore(query, key) {
+  const q=String(query||"").trim().toLocaleLowerCase().replace(/\\/g,"/");
+  const value=String(key||"").toLocaleLowerCase();
+  if(!q||!value)return -1;
+  if(value===q)return 10000;
+  if(value.startsWith(q))return 9000-q.length;
+  const direct=value.indexOf(q);
+  if(direct>=0)return 8000-direct;
+
+  const tokens=q.split("/").filter(Boolean);
+  let tokenScore=0, cursor=0;
+  for(const token of tokens){
+    const found=value.indexOf(token,cursor);
+    if(found<0){
+      // Loose subsequence match, useful for incomplete path fragments.
+      let qi=0;
+      for(let i=cursor;i<value.length&&qi<token.length;i++) if(value[i]===token[qi]) qi++;
+      if(qi!==token.length)return -1;
+      tokenScore+=250;
+    }else{
+      tokenScore+=1000-Math.min(found,500);
+      cursor=found+token.length;
+    }
+  }
+  return tokenScore;
+}
+async function searchExplorerObjects(targets, query, limit = 200) {
+  const ranked=[];
+  const seenFolders=new Set();
+  for(const target of targets||[]){
+    if(!target?.accountId||!target?.bucketName)continue;
+    const objects=await listAllObjects(target.accountId,target.bucketName,"");
+    for(const object of objects){
+      const key=String(object.key||object.name||"");
+      if(!key)continue;
+      const fileScore=explorerSearchScore(query,key);
+      if(fileScore>=0&&key.split("/").pop()!==".redown"){
+        ranked.push({
+          score:fileScore,
+          accountId:target.accountId,
+          accountName:target.accountName||"",
+          bucketName:target.bucketName,
+          key,
+          folder:false,
+          object
+        });
+      }
+      const parts=key.split("/").filter(Boolean);
+      const depth=parts[parts.length-1]===".redown"?parts.length-1:Math.max(0,parts.length-1);
+      let folder="";
+      for(let i=0;i<depth;i++){
+        folder+=(folder?"/":"")+parts[i];
+        const id=target.accountId+"\n"+target.bucketName+"\n"+folder;
+        if(seenFolders.has(id))continue;
+        seenFolders.add(id);
+        const score=explorerSearchScore(query,folder+"/");
+        if(score>=0)ranked.push({
+          score:score+100,
+          accountId:target.accountId,
+          accountName:target.accountName||"",
+          bucketName:target.bucketName,
+          key:folder+"/",
+          folder:true
+        });
+      }
+    }
+  }
+  ranked.sort((a,b)=>b.score-a.score||String(a.key).localeCompare(String(b.key),undefined,{numeric:true,sensitivity:"base"}));
+  return ranked.slice(0,Math.max(1,Math.min(500,Number(limit)||200)));
+}
 async function listFolderPrefixes(accountId, bucketName, limit = 5000) {
   const objects = await listAllObjects(accountId, bucketName, "");
   const prefixes = new Set([""]);
@@ -1732,6 +1802,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       }
       if (message?.type === "cfObjects") return sendResponse({ ok:true, ...(await listObjects(message.accountId,message.bucketName,message.prefix,message.cursor)) });
       if (message?.type === "cfFolderPrefixes") return sendResponse({ ok:true, prefixes:await listFolderPrefixes(message.accountId,message.bucketName,message.limit || 5000) });
+      if (message?.type === "cfSearchObjects") return sendResponse({ ok:true, results:await searchExplorerObjects(message.targets || [], message.query, message.limit || 200) });
       if (message?.type === "cfPrepareBucket") return sendResponse({ ok:true, profile:await preparedProfile(message.accountId,message.bucketName,message.accountName) });
       if (message?.type === "cfTransferObjects") return sendResponse({ ok:true, ...(await transferExplorerObjects(message)) });
       if (message?.type === "cfDeleteObjects") return sendResponse({ ok:true, ...(await deleteExplorerObjects(message)) });
