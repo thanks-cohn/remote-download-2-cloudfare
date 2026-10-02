@@ -269,10 +269,11 @@ function assetCorsControl(profile){
 function renderProfiles(){
   const root=$("profiles");
   root.replaceChildren();
-  $("profiles-empty").hidden=profiles.length>0;
+  const visibleProfiles=profiles.filter(profile=>!profile.explorerManaged);
+  $("profiles-empty").hidden=visibleProfiles.length>0;
 
   profiles.sort((a,b)=>(a.menuOrder??999)-(b.menuOrder??999));
-  profiles.forEach((p,index)=>{
+  visibleProfiles.forEach((p,index)=>{
     const card=document.createElement("article");
     card.className="card";
 
@@ -371,21 +372,16 @@ function publicObjectUrl(profile,key){
 function r2Profiles(){return profiles.filter(p=>p.type==="cloudflare-r2");}
 function renderWorkspaceProfiles(){
   const select=$("local-profile");
-  const tools=$("local-tools");
-  if(!select||!tools)return;
-  const r2=r2Profiles();
-  tools.hidden=!r2.length;
-  if(!r2.length){workspaceTarget=null;return;}
+  if(!select)return;
   const previous=select.value;
   select.replaceChildren();
-  for(const profile of r2){
+  for(const profile of r2Profiles()){
     const option=document.createElement("option");
-    option.value=profile.id;
-    option.textContent=`${displayName(profile)} · ${profile.bucketName}`;
-    select.append(option);
+    option.value=profile.id;option.textContent=`${displayName(profile)} · ${profile.bucketName}`;select.append(option);
   }
-  if(r2.some(p=>p.id===previous))select.value=previous;
-  workspaceTarget=r2.find(p=>p.id===select.value)||r2[0];
+  if(Array.from(select.options).some(o=>o.value===previous))select.value=previous;
+  const uploadCard=$("local-dropzone")?.closest(".card");
+  if(uploadCard)uploadCard.hidden=!select.options.length;
 }
 function categoryFromPrefix(prefix){
   const first=String(prefix||"").split("/").filter(Boolean)[0]?.toLowerCase();
@@ -397,7 +393,7 @@ function categoryFromPrefix(prefix){
 async function uploadLocalFiles(fileList){
   const files=Array.from(fileList||[]);
   if(!files.length)return;
-  const profile=workspaceTarget;
+  const profile=profiles.find(p=>p.id===$("local-profile").value);
   if(!profile)return setStatus("local-upload-status","Choose an R2 bucket first.","bad");
   const prefix=$("local-prefix").value.trim();
   const status=$("local-upload-status");
@@ -447,8 +443,7 @@ async function uploadLocalFiles(fileList){
     }
   }
   await renderHistory();
-  $("workspace-prefix").value=prefix;
-  await browseWorkspace();
+  if(workspaceTarget?.accountId===profile.accountId&&workspaceTarget?.bucketName===profile.bucketName){workspacePrefix=normalizePrefix(prefix);await browseWorkspace();}
 }
 function objectContentType(obj,key){
   const explicit=String(obj?.httpMetadata?.contentType||obj?.contentType||"").toLowerCase();
@@ -500,21 +495,18 @@ async function showWorkspacePreview(obj,row){
   document.querySelectorAll("#workspace-objects .object.active").forEach(el=>el.classList.remove("active"));
   row?.classList.add("active");
   const key=obj.key||obj.name||String(obj);
-  const url=publicObjectUrl(workspaceTarget,key);
+  let previewProfile=r2Profiles().find(p=>p.accountId===workspaceTarget?.accountId&&p.bucketName===workspaceTarget?.bucketName);
+  if(!previewProfile){
+    const preparing=document.createElement("div");preparing.className="meta";preparing.innerHTML='<span class="operation-spinner"></span>Preparing preview…';root.append(preparing);
+    try{previewProfile=await ensurePrepared(workspaceTarget);}catch(error){preparing.textContent=friendlyError(error,"prepare the preview");return;}
+    root.replaceChildren();
+  }
+  const url=publicObjectUrl(previewProfile,key);
   const type=objectContentType(obj,key);
-
-  const head=document.createElement("div");
-  head.className="preview-head";
-  const title=document.createElement("div");
-  title.className="preview-title";
-  title.textContent=key;
-  const expand=document.createElement("button");
-  expand.className="ghost";
-  expand.type="button";
-  expand.textContent=workspacePreviewExpanded?"Collapse":"Expand";
-  expand.addEventListener("click",()=>setWorkspacePreviewExpanded(!workspacePreviewExpanded));
-  head.append(title,expand);
-  root.append(head);
+  const head=document.createElement("div");head.className="preview-head";
+  const title=document.createElement("div");title.className="preview-title";title.textContent=key;
+  const expand=document.createElement("button");expand.className="ghost";expand.type="button";expand.textContent=workspacePreviewExpanded?"Collapse":"Expand";expand.addEventListener("click",()=>setWorkspacePreviewExpanded(!workspacePreviewExpanded));
+  head.append(title,expand);root.append(head);
 
   const media=document.createElement("div");
   media.className="preview-media";
@@ -568,76 +560,1237 @@ async function showWorkspacePreview(obj,row){
 
 function setWorkspacePreviewExpanded(expanded){
   workspacePreviewExpanded=Boolean(expanded);
-  const grid=document.querySelector(".workspace-grid");
+  const grid=document.querySelector(".explorer-body");
   grid?.classList.toggle("expanded",workspacePreviewExpanded);
   const button=$("#preview-expand")||document.querySelector("#workspace-preview .preview-head button");
   if(button)button.textContent=workspacePreviewExpanded?"Collapse":"Expand";
 }
 
-async function browseWorkspace(){
-  if(!workspaceTarget)return;
-  const root=$("workspace-objects");
-  root.replaceChildren();
-  const prefix=$("workspace-prefix").value.trim();
-  const result=await send({
-    type:"cfObjects",
-    accountId:workspaceTarget.accountId,
-    bucketName:workspaceTarget.bucketName,
-    prefix
-  });
-  if(!result?.ok){
-    const e=document.createElement("div");e.className="object";e.textContent=result?.error||"Could not browse bucket";root.append(e);return;
+let explorerAccounts = [];
+let explorerBuckets = new Map();
+let workspacePrefix = "";
+let explorerItems = [];
+let explorerRawObjects = [];
+let explorerNextCursor = "";
+let explorerSelected = new Set();
+let explorerAnchor = -1;
+let explorerHistory = [];
+let explorerHistoryIndex = -1;
+let explorerClipboard = null;
+let explorerSort = { field: "name", direction: 1 };
+let explorerOperation = null;
+let explorerPreparing = new Map();
+const EXPLORER_RENDER_LIMIT = 400;
+let explorerVisibleLimit = EXPLORER_RENDER_LIMIT;
+
+function normalizePrefix(value) {
+  const parts = String(value || "")
+    .split("/")
+    .filter(Boolean);
+  if (parts.some((x) => x === "." || x === ".." || /[\\\0]/.test(x)))
+    throw new Error("That location is not valid");
+  return parts.length ? `${parts.join("/")}/` : "";
+}
+function accountName(id) {
+  return explorerAccounts.find((a) => a.id === id)?.name || id || "Account";
+}
+function explorerSource() {
+  return {
+    accountId: workspaceTarget.accountId,
+    bucketName: workspaceTarget.bucketName,
+    accountName: accountName(workspaceTarget.accountId),
+  };
+}
+function iconSvg(kind) {
+  const paths = {
+    bucket:
+      '<path d="M4 6c0-1.1 3.6-2 8-2s8 .9 8 2-3.6 2-8 2-8-.9-8-2Zm0 0v5c0 1.1 3.6 2 8 2s8-.9 8-2V6m-16 5v5c0 1.1 3.6 2 8 2s8-.9 8-2v-5"/>',
+    folder:
+      '<path d="M3 6.5h6l2 2h10v9.5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6.5Zm0 3h18"/>',
+    image:
+      '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="9" r="1.5"/><path d="m5 18 5-5 3 3 2-2 4 4"/>',
+    video:
+      '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m10 9 5 3-5 3V9Z"/>',
+    audio:
+      '<path d="M9 18V7l9-2v11M9 18a3 3 0 1 1-3-3h3m9 1a3 3 0 1 1-3-3h3"/>',
+    code: '<path d="m8 8-4 4 4 4m8-8 4 4-4 4m-5 3 2-14"/>',
+    model:
+      '<path d="m12 3 8 4.5v9L12 21l-8-4.5v-9L12 3Zm0 9 8-4.5M12 12 4 7.5M12 12v9"/>',
+    archive: '<path d="M5 4h14v16H5zM8 4v4h8V4m-5 7h2m-2 3h2"/>',
+    pdf: '<path d="M6 3h8l4 4v14H6V3Zm8 0v5h4M8 15h8M8 18h5"/>',
+    file: '<path d="M6 3h8l4 4v14H6V3Zm8 0v5h4"/>',
+    refresh: '<path d="M20 11a8 8 0 1 0-2 5.3M20 5v6h-6"/>',
+  };
+  return `<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${paths[kind] || paths.file}</svg>`;
+}
+function fileKind(key, type = "") {
+  const ext = String(key).split(".").pop().toLowerCase();
+  if (
+    type.startsWith("image/") ||
+    ["png", "jpg", "jpeg", "gif", "webp", "svg", "avif"].includes(ext)
+  )
+    return "image";
+  if (type.startsWith("video/") || ["mp4", "webm", "mov", "mkv"].includes(ext))
+    return "video";
+  if (type.startsWith("audio/") || ["mp3", "wav", "ogg", "flac"].includes(ext))
+    return "audio";
+  if (ext === "pdf") return "pdf";
+  if (["zip", "tar", "gz", "7z", "rar"].includes(ext)) return "archive";
+  if (["glb", "gltf", "obj", "fbx", "stl"].includes(ext)) return "model";
+  if (
+    [
+      "txt",
+      "md",
+      "json",
+      "js",
+      "mjs",
+      "ts",
+      "tsx",
+      "jsx",
+      "css",
+      "html",
+      "xml",
+      "yaml",
+      "yml",
+      "py",
+      "rs",
+      "go",
+      "java",
+      "c",
+      "cpp",
+      "h",
+      "sh",
+    ].includes(ext)
+  )
+    return "code";
+  return "file";
+}
+function itemType(key, obj = {}) {
+  const ext = String(key).split(".").pop().toLowerCase();
+  const kind = fileKind(
+    key,
+    String(obj?.httpMetadata?.contentType || obj?.contentType || ""),
+  );
+  const labels = {
+    image: "image",
+    video: "video",
+    audio: "audio",
+    pdf: "PDF document",
+    archive: "archive",
+    model: "3D model",
+    code: "document",
+    file: "file",
+  };
+  if (ext === "js") return "JavaScript";
+  if (ext === "json") return "JSON";
+  if (ext === "md") return "Markdown";
+  return ext
+    ? `${ext.toUpperCase()} ${labels[kind]}`
+    : labels[kind][0].toUpperCase() + labels[kind].slice(1);
+}
+function itemDate(obj) {
+  const value =
+    obj?.uploaded || obj?.uploadedAt || obj?.created || obj?.lastModified;
+  return value ? new Date(value) : null;
+}
+function buildDirectoryItems(objects, prefix) {
+  const folders = new Map(),
+    files = [];
+  for (const object of objects || []) {
+    const key = object.key || object.name || "";
+    if (!key || key === ".redown" || !key.startsWith(prefix)) continue;
+    const relative = key.slice(prefix.length);
+    if (!relative) continue;
+    const slash = relative.indexOf("/");
+    if (slash >= 0) {
+      const name = relative.slice(0, slash);
+      if (name)
+        folders.set(name, {
+          id: `folder:${prefix}${name}/`,
+          name,
+          key: `${prefix}${name}/`,
+          folder: true,
+          size: null,
+          modified: null,
+          type: "Folder",
+        });
+      continue;
+    }
+    if (relative === ".redown") continue;
+    files.push({
+      id: `file:${key}`,
+      name: relative,
+      key,
+      folder: false,
+      size: Number(object.size || 0),
+      modified: itemDate(object),
+      type: itemType(key, object),
+      kind: fileKind(
+        key,
+        String(object?.httpMetadata?.contentType || object?.contentType || ""),
+      ),
+      object,
+    });
   }
-  workspaceObjects=(result.objects||[]).filter(obj=>{
-    const key=obj.key||obj.name||"";
-    return key&&!key.endsWith("/.redown");
-  });
-  if(!workspaceObjects.length){
-    const e=document.createElement("div");e.className="object";e.textContent="No objects under this prefix.";root.append(e);
-    const preview=$("workspace-preview");
-    preview.replaceChildren();
-    const head=document.createElement("div");head.className="preview-head";
-    const note=document.createElement("div");note.className="meta";note.textContent="Nothing to preview here yet.";
-    const expand=document.createElement("button");expand.className="ghost";expand.type="button";expand.textContent=workspacePreviewExpanded?"Collapse":"Expand";
-    expand.addEventListener("click",()=>setWorkspacePreviewExpanded(!workspacePreviewExpanded));
-    head.append(note,expand);preview.append(head);
+  return [...folders.values(), ...files];
+}
+function sortedVisibleItems() {
+  const query = $("workspace-search")?.value.trim().toLocaleLowerCase() || "";
+  return explorerItems
+    .filter((x) => !query || x.name.toLocaleLowerCase().includes(query))
+    .sort((a, b) => {
+      if (a.folder !== b.folder) return a.folder ? -1 : 1;
+      let av = a[explorerSort.field],
+        bv = b[explorerSort.field];
+      if (explorerSort.field === "modified") {
+        av = av?.getTime() || 0;
+        bv = bv?.getTime() || 0;
+      }
+      if (typeof av === "number") return (av - bv) * explorerSort.direction;
+      return (
+        String(av || "").localeCompare(String(bv || ""), undefined, {
+          numeric: true,
+          sensitivity: "base",
+        }) * explorerSort.direction
+      );
+    });
+}
+function setOperation(
+  type,
+  message,
+  state = "running",
+  completed = 0,
+  total = 0,
+) {
+  explorerOperation = {
+    id: uid(),
+    type,
+    state,
+    message,
+    completed,
+    total,
+    errors: [],
+  };
+  renderOperation();
+}
+function renderOperation() {
+  const el = $("explorer-operation");
+  if (!el) return;
+  if (!explorerOperation) {
+    el.textContent = "";
     return;
   }
-  for(const obj of workspaceObjects.slice(0,300)){
-    const key=obj.key||obj.name||String(obj);
-    const row=document.createElement("div");
-    row.className="object";
-    row.textContent=`${key} · ${formatBytes(obj.size)}`;
-    row.addEventListener("click",()=>showWorkspacePreview(obj,row));
-    root.append(row);
+  const progress = explorerOperation.total
+    ? ` · ${explorerOperation.completed} of ${explorerOperation.total}`
+    : "";
+  el.innerHTML = `${explorerOperation.state === "running" ? '<span class="operation-spinner"></span>' : ""}${explorerOperation.message}${progress}`;
+}
+function finishOperation(message, error = false) {
+  if (!explorerOperation)
+    setOperation("status", message, error ? "failed" : "done");
+  else
+    Object.assign(explorerOperation, {
+      message,
+      state: error ? "failed" : "done",
+    });
+  renderOperation();
+  setTimeout(() => {
+    if (explorerOperation?.state !== "running") {
+      explorerOperation = null;
+      renderOperation();
+    }
+  }, 6000);
+}
+function friendlyError(error, action = "complete that action") {
+  const raw = error?.message || String(error);
+  if (/unauthorized|401|403/i.test(raw))
+    return "REDOWN could not access this bucket yet.";
+  if (/not found|404/i.test(raw)) return "The item is no longer available.";
+  return `Could not ${action}.`;
+}
+async function refreshProfiles() {
+  profiles = (await chrome.storage.local.get("profiles")).profiles || [];
+  renderWorkspaceProfiles();
+}
+async function ensurePrepared(target = workspaceTarget) {
+  const existing = r2Profiles().find(
+    (p) =>
+      p.accountId === target.accountId && p.bucketName === target.bucketName,
+  );
+  if (existing) return existing;
+  const id = `${target.accountId}:${target.bucketName}`;
+  if (explorerPreparing.has(id)) return explorerPreparing.get(id);
+  const task = (async () => {
+    setOperation("prepare", "Preparing this bucket for file operations…");
+    let lastError;
+    for (let attempt = 0; attempt < 10; attempt++) {
+      const result = await send({
+        type: "cfPrepareBucket",
+        accountId: target.accountId,
+        bucketName: target.bucketName,
+        accountName: accountName(target.accountId),
+      });
+      if (result?.ok) {
+        await refreshProfiles();
+        finishOperation("Bucket ready");
+        return result.profile;
+      }
+      lastError = new Error(
+        result?.error || "Bucket preparation is still propagating",
+      );
+      explorerOperation.message =
+        "Verifying Cloudflare access… Cloudflare may take a few minutes; REDOWN will keep checking.";
+      renderOperation();
+      if (attempt < 9)
+        await new Promise((resolve) => setTimeout(resolve, 30000));
+    }
+    finishOperation("REDOWN could not prepare this bucket yet.", true);
+    throw lastError;
+  })().finally(() => explorerPreparing.delete(id));
+  explorerPreparing.set(id, task);
+  return task;
+}
+function rememberLocation() {
+  if (!workspaceTarget) return;
+  const location = {
+    accountId: workspaceTarget.accountId,
+    bucketName: workspaceTarget.bucketName,
+    prefix: workspacePrefix,
+  };
+  explorerHistory = explorerHistory.slice(0, explorerHistoryIndex + 1);
+  explorerHistory.push(location);
+  explorerHistoryIndex = explorerHistory.length - 1;
+  chrome.storage.local.set({ explorerLastLocation: location });
+  updateNavButtons();
+}
+async function goLocation(accountId, bucketName, prefix = "", remember = true) {
+  const bucket = (explorerBuckets.get(accountId) || []).find(
+    (b) => b.name === bucketName,
+  );
+  if (!bucket) return;
+  workspaceTarget = {
+    accountId,
+    bucketName,
+    accountName: accountName(accountId),
+    bucket,
+  };
+  workspacePrefix = normalizePrefix(prefix);
+  if ($("local-prefix"))
+    $("local-prefix").value = workspacePrefix.replace(/\/$/, "");
+  const uploadProfile = r2Profiles().find(
+    (p) => p.accountId === accountId && p.bucketName === bucketName,
+  );
+  if (uploadProfile && $("local-profile"))
+    $("local-profile").value = uploadProfile.id;
+  if ($("explorer-location"))
+    $("explorer-location").value = `${accountId}|${bucketName}`;
+  explorerSelected.clear();
+  explorerAnchor = -1;
+  if (remember) rememberLocation();
+  renderExplorerChrome();
+  await browseWorkspace();
+}
+function updateNavButtons() {
+  $("explorer-back").disabled = explorerHistoryIndex <= 0;
+  $("explorer-forward").disabled =
+    explorerHistoryIndex >= explorerHistory.length - 1;
+  $("explorer-up").disabled = !workspaceTarget || !workspacePrefix;
+}
+function renderExplorerChrome() {
+  const crumbs = $("explorer-breadcrumbs");
+  crumbs.replaceChildren();
+  if (!workspaceTarget) {
+    updateNavButtons();
+    return;
+  }
+  const parts = [
+    { label: "Cloudflare", kind: "root" },
+    { label: accountName(workspaceTarget.accountId), kind: "account" },
+    { label: workspaceTarget.bucketName, prefix: "" },
+  ];
+  let cumulative = "";
+  for (const part of workspacePrefix.split("/").filter(Boolean)) {
+    cumulative += part + "/";
+    parts.push({ label: part, prefix: cumulative });
+  }
+  parts.forEach((part, index) => {
+    const button = document.createElement("button");
+    button.className = "crumb";
+    button.textContent = part.label;
+    button.onclick = () => {
+      if (part.kind === "root") return loadExplorerInventory();
+      if (part.kind === "account") {
+        const first = (explorerBuckets.get(workspaceTarget.accountId) || [])[0];
+        if (first) goLocation(workspaceTarget.accountId, first.name);
+        return;
+      }
+      goLocation(
+        workspaceTarget.accountId,
+        workspaceTarget.bucketName,
+        part.prefix,
+      );
+    };
+    crumbs.append(button);
+  });
+  document
+    .querySelectorAll(".source-item")
+    .forEach((el) =>
+      el.classList.toggle(
+        "active",
+        el.dataset.account === workspaceTarget.accountId &&
+          el.dataset.bucket === workspaceTarget.bucketName,
+      ),
+    );
+  document.querySelectorAll(".file-head button").forEach((button) => {
+    const active = button.dataset.sort === explorerSort.field;
+    button.textContent =
+      button.dataset.label || button.textContent.replace(/[ ↑↓]$/g, "");
+    button.dataset.label = button.textContent;
+    if (active) button.textContent += explorerSort.direction > 0 ? " ↑" : " ↓";
+  });
+  updateNavButtons();
+}
+function renderSources() {
+  const root = $("explorer-sources"),
+    mobile = $("explorer-location");
+  root.replaceChildren();
+  mobile.replaceChildren();
+  for (const account of explorerAccounts) {
+    const group = document.createElement("div");
+    group.className = "account-group";
+    const label = document.createElement("div");
+    label.className = "account-label";
+    label.textContent = account.name || account.id;
+    group.append(label);
+    for (const bucket of explorerBuckets.get(account.id) || []) {
+      const button = document.createElement("button");
+      button.className = "source-item";
+      button.dataset.account = account.id;
+      button.dataset.bucket = bucket.name;
+      const icon = document.createElement("span");
+      icon.className = "source-icon";
+      icon.innerHTML = iconSvg("bucket");
+      const name = document.createElement("span");
+      name.textContent = bucket.name;
+      button.append(icon, name);
+      button.onclick = () => goLocation(account.id, bucket.name);
+      button.ondragover = (e) => e.preventDefault();
+      button.ondrop = (e) => dropOnBucket(e, account.id, bucket.name);
+      group.append(button);
+      const option = document.createElement("option");
+      option.value = `${account.id}|${bucket.name}`;
+      option.textContent = `${account.name} / ${bucket.name}`;
+      mobile.append(option);
+    }
+    root.append(group);
+  }
+  mobile.onchange = () => {
+    const [accountId, bucketName] = mobile.value.split("|");
+    goLocation(accountId, bucketName);
+  };
+  renderExplorerChrome();
+}
+async function loadExplorerInventory() {
+  const accountsResult = await send({ type: "cfAccounts" });
+  if (!accountsResult?.ok)
+    throw new Error(accountsResult?.error || "Could not load accounts");
+  explorerAccounts = accountsResult.accounts || [];
+  explorerBuckets.clear();
+  await Promise.all(
+    explorerAccounts.map(async (account) => {
+      const result = await send({ type: "cfBuckets", accountId: account.id });
+      explorerBuckets.set(account.id, result?.ok ? result.buckets || [] : []);
+    }),
+  );
+  renderSources();
+  if (
+    workspaceTarget &&
+    (explorerBuckets.get(workspaceTarget.accountId) || []).some(
+      (b) => b.name === workspaceTarget.bucketName,
+    )
+  ) {
+    renderExplorerChrome();
+    return;
+  }
+  const stored = (await chrome.storage.local.get("explorerLastLocation"))
+    .explorerLastLocation;
+  const valid =
+    stored &&
+    (explorerBuckets.get(stored.accountId) || []).some(
+      (b) => b.name === stored.bucketName,
+    );
+  if (valid)
+    await goLocation(stored.accountId, stored.bucketName, stored.prefix);
+  else {
+    const account = explorerAccounts.find(
+      (a) => (explorerBuckets.get(a.id) || []).length,
+    );
+    const bucket = account && (explorerBuckets.get(account.id) || [])[0];
+    if (bucket) await goLocation(account.id, bucket.name);
+    else renderFileItems();
   }
 }
-function wireWorkspace(){
-  const select=$("local-profile");
-  if(!select)return;
-  select.addEventListener("change",async()=>{
-    workspaceTarget=profiles.find(p=>p.id===select.value)||null;
-    if(workspaceTarget){
-      $("workspace-prefix").value="";
-      await browseWorkspace();
-    }
+async function browseWorkspace({ append = false } = {}) {
+  const root = $("workspace-objects");
+  if (!workspaceTarget) {
+    renderFileItems();
+    return;
+  }
+  if (!append) {
+    root.innerHTML =
+      '<div class="file-empty"><span class="operation-spinner"></span><strong>Loading folder…</strong>Fetching objects from Cloudflare R2</div>';
+    $("explorer-status").textContent = "";
+    explorerRawObjects = [];
+    explorerNextCursor = "";
+    explorerVisibleLimit = EXPLORER_RENDER_LIMIT;
+  }
+  const result = await send({
+    type: "cfObjects",
+    accountId: workspaceTarget.accountId,
+    bucketName: workspaceTarget.bucketName,
+    prefix: workspacePrefix,
+    cursor: append ? explorerNextCursor : "",
   });
-  const drop=$("local-dropzone");
-  const picker=$("local-files");
-  drop.addEventListener("click",()=>picker.click());
-  drop.addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();picker.click();}});
-  picker.addEventListener("change",async()=>{await uploadLocalFiles(picker.files);picker.value="";});
-  for(const eventName of ["dragenter","dragover"]){
-    drop.addEventListener(eventName,e=>{e.preventDefault();drop.classList.add("drag");});
+  if (!result?.ok) {
+    if (!append) explorerItems = [];
+    $("explorer-status").textContent = friendlyError(
+      new Error(result?.error || ""),
+      "load this folder",
+    );
+  } else {
+    explorerRawObjects.push(...(result.objects || []));
+    explorerNextCursor = result.cursor || "";
+    explorerItems = buildDirectoryItems(explorerRawObjects, workspacePrefix);
   }
-  for(const eventName of ["dragleave","drop"]){
-    drop.addEventListener(eventName,e=>{e.preventDefault();drop.classList.remove("drag");});
+  if (!append) explorerSelected.clear();
+  renderFileItems();
+  renderExplorerChrome();
+}
+function renderFileItems() {
+  const root = $("workspace-objects");
+  root.replaceChildren();
+  const all = sortedVisibleItems();
+  const items = all.slice(0, explorerVisibleLimit);
+  const query = $("workspace-search")?.value.trim() || "";
+  if (!workspaceTarget)
+    root.innerHTML =
+      '<div class="file-empty"><strong>No R2 buckets found</strong>Create a bucket to begin.</div>';
+  else if (!items.length)
+    root.innerHTML = `<div class="file-empty"><strong>${explorerItems.length ? `No files match “${query}”` : workspacePrefix ? "This folder is empty." : "This bucket is empty."}</strong>${explorerItems.length ? "Try a different search." : "Drop files here or choose Upload."}</div>`;
+  items.forEach((item, index) => root.append(createFileRow(item, index)));
+  if (all.length > items.length || explorerNextCursor) {
+    const more = document.createElement("button");
+    more.className = "secondary load-more";
+    more.textContent = items.length < all.length
+      ? `Show ${Math.min(EXPLORER_RENDER_LIMIT, all.length - items.length)} more`
+      : "Load more files";
+    more.onclick = () => {
+      if (items.length < all.length) {
+        explorerVisibleLimit += EXPLORER_RENDER_LIMIT;
+        renderFileItems();
+      } else {
+        browseWorkspace({ append: true });
+      }
+    };
+    root.append(more);
   }
-  drop.addEventListener("drop",e=>uploadLocalFiles(e.dataTransfer?.files));
-  $("workspace-browse").addEventListener("click",browseWorkspace);
-  $("workspace-refresh").addEventListener("click",browseWorkspace);
-  $("workspace-prefix").addEventListener("keydown",e=>{if(e.key==="Enter")browseWorkspace();});
-  $("preview-expand")?.addEventListener("click",()=>setWorkspacePreviewExpanded(!workspacePreviewExpanded));
+  root.oncontextmenu = (e) => {
+    if (e.target === root || e.target.closest(".file-empty")) {
+      e.preventDefault();
+      if (e.target === root) explorerSelected.clear();
+      showExplorerMenu(e.clientX, e.clientY, null);
+      renderFileItems();
+    }
+  };
+  root.ondragover = (e) => {
+    if (e.dataTransfer?.types.includes("Files")) e.preventDefault();
+  };
+  root.ondrop = (e) => {
+    if (e.target === root || e.target.closest(".file-empty")) {
+      e.preventDefault();
+      handleLocalDrop(e, workspacePrefix);
+    }
+  };
+  const selected = selectedExplorerItems();
+  const bytes = selected.reduce((sum, item) => sum + (item.size || 0), 0);
+  $("explorer-count").textContent = workspaceTarget
+    ? `${all.length}${explorerNextCursor ? "+" : ""} item${all.length === 1 ? "" : "s"}`
+    : "No location selected";
+  $("explorer-selection").textContent = selected.length
+    ? `${selected.length} selected${bytes ? ` · ${formatBytes(bytes)}` : ""}`
+    : "";
+}
+function createFileRow(item, index) {
+  const row = document.createElement("div");
+  row.className = `file-row${item.folder ? " folder" : ""}${explorerSelected.has(item.id) ? " selected" : ""}${explorerClipboard?.operation === "move" && explorerClipboard.entries.some((x) => x.key === item.key) ? " cut" : ""}`;
+  row.dataset.id = item.id;
+  row.tabIndex = 0;
+  row.draggable = true;
+  row.setAttribute("role", "row");
+  row.setAttribute("aria-selected", String(explorerSelected.has(item.id)));
+  const name = document.createElement("div");
+  name.className = "file-cell file-name";
+  const icon = document.createElement("span");
+  icon.className = "file-icon";
+  icon.innerHTML = iconSvg(item.folder ? "folder" : item.kind);
+  const text = document.createElement("span");
+  text.textContent = item.name;
+  name.append(icon, text);
+  const size = document.createElement("div");
+  size.className = "file-cell file-muted";
+  size.textContent = item.folder ? "—" : formatBytes(item.size);
+  const modified = document.createElement("div");
+  modified.className = "file-cell file-muted";
+  modified.textContent = item.modified ? item.modified.toLocaleString() : "—";
+  const type = document.createElement("div");
+  type.className = "file-cell file-muted";
+  type.textContent = item.type;
+  row.append(name, size, modified, type);
+  row.onclick = (e) => selectExplorerItem(item, index, e);
+  row.ondblclick = () => openExplorerItem(item);
+  row.oncontextmenu = (e) => {
+    e.preventDefault();
+    if (!explorerSelected.has(item.id)) {
+      explorerSelected = new Set([item.id]);
+      renderFileItems();
+    }
+    showExplorerMenu(e.clientX, e.clientY, item);
+  };
+  row.ondragstart = (e) => {
+    if (!explorerSelected.has(item.id)) explorerSelected = new Set([item.id]);
+    e.dataTransfer.setData("application/x-redown-items", "1");
+  };
+  if (item.folder) {
+    row.ondragover = (e) => {
+      e.preventDefault();
+      row.classList.add("drop-target");
+    };
+    row.ondragleave = () => row.classList.remove("drop-target");
+    row.ondrop = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      row.classList.remove("drop-target");
+      if (e.dataTransfer.files?.length) handleLocalDrop(e, item.key);
+      else
+        moveSelectionTo({
+          accountId: workspaceTarget.accountId,
+          bucketName: workspaceTarget.bucketName,
+          prefix: item.key,
+        });
+    };
+  }
+  let timer;
+  row.ontouchstart = (e) => {
+    timer = setTimeout(() => {
+      const touch = e.touches[0];
+      showExplorerMenu(touch.clientX, touch.clientY, item);
+    }, 550);
+  };
+  row.ontouchend = row.ontouchmove = () => clearTimeout(timer);
+  return row;
+}
+function selectExplorerItem(item, index, event = {}) {
+  const items = sortedVisibleItems();
+  if (event.shiftKey && explorerAnchor >= 0) {
+    const [a, b] = [explorerAnchor, index].sort((x, y) => x - y);
+    if (!event.ctrlKey && !event.metaKey) explorerSelected.clear();
+    items.slice(a, b + 1).forEach((x) => explorerSelected.add(x.id));
+  } else if (event.ctrlKey || event.metaKey) {
+    explorerSelected.has(item.id)
+      ? explorerSelected.delete(item.id)
+      : explorerSelected.add(item.id);
+    explorerAnchor = index;
+  } else {
+    explorerSelected = new Set([item.id]);
+    explorerAnchor = index;
+  }
+  renderFileItems();
+  if (!item.folder && explorerSelected.size === 1)
+    showWorkspacePreview(item.object, rootRow(item.id));
+}
+function rootRow(id) {
+  return Array.from(
+    document.querySelectorAll("#workspace-objects .file-row"),
+  ).find((x) => x.dataset.id === id);
+}
+async function openExplorerItem(item) {
+  if (item.folder)
+    return goLocation(
+      workspaceTarget.accountId,
+      workspaceTarget.bucketName,
+      item.key,
+    );
+  await showWorkspacePreview(item.object, rootRow(item.id));
+}
+function selectedExplorerItems() {
+  return explorerItems.filter((x) => explorerSelected.has(x.id));
+}
+function clipboardEntries(items = selectedExplorerItems()) {
+  return items.map((item) => ({
+    key: item.key,
+    folder: item.folder,
+    displayName: item.name,
+  }));
+}
+async function setExplorerClipboard(
+  operation,
+  items = selectedExplorerItems(),
+) {
+  if (!items.length) return;
+  explorerClipboard = {
+    operation,
+    accountId: workspaceTarget.accountId,
+    bucketName: workspaceTarget.bucketName,
+    accountName: accountName(workspaceTarget.accountId),
+    entries: clipboardEntries(items),
+  };
+  await chrome.storage.session.set({ explorerClipboard });
+  renderFileItems();
+}
+async function pasteExplorer(
+  destination = { ...explorerSource(), prefix: workspacePrefix },
+) {
+  if (!explorerClipboard?.entries?.length) return;
+  setOperation(
+    explorerClipboard.operation,
+    `${explorerClipboard.operation === "move" ? "Moving" : "Copying"} ${explorerClipboard.entries.length} selected item${explorerClipboard.entries.length === 1 ? "" : "s"}…`,
+  );
+  const request = {
+    type: "cfTransferObjects",
+    operation: explorerClipboard.operation,
+    source: {
+      accountId: explorerClipboard.accountId,
+      bucketName: explorerClipboard.bucketName,
+      accountName: explorerClipboard.accountName,
+    },
+    destination,
+    entries: explorerClipboard.entries,
+    conflict: "skip",
+  };
+  let result = await send(request);
+  if (!result?.ok) {
+    finishOperation(
+      friendlyError(new Error(result?.error || ""), request.operation),
+      true,
+    );
+    return;
+  }
+  if (result.conflicts?.length) {
+    const choice = prompt(
+      `${result.conflicts.length} item${result.conflicts.length === 1 ? "" : "s"} already exist. Type Replace, Keep both, Skip, or Cancel.`,
+      "Keep both",
+    )
+      ?.trim()
+      .toLowerCase();
+    if (!choice || choice === "cancel") {
+      finishOperation("Paste cancelled");
+      return;
+    }
+    const conflict = choice.startsWith("r")
+      ? "replace"
+      : choice.startsWith("k")
+        ? "keep"
+        : "skip";
+    if (conflict !== "skip") {
+      result = await send({
+        ...request,
+        entries: result.conflicts.map((x) => ({
+          key: x.sourceKey,
+          destinationKey: x.destinationKey,
+          folder: false,
+          displayName: x.sourceKey.split("/").pop(),
+        })),
+        conflict,
+      });
+    }
+  }
+  if (request.operation === "move" && !result.errors?.length) {
+    explorerClipboard = null;
+    await chrome.storage.session.remove("explorerClipboard");
+  }
+  const failed = (result.errors || []).length;
+  finishOperation(
+    failed
+      ? `${result.completed || 0} files completed · ${failed} could not be ${request.operation === "move" ? "moved" : "copied"}`
+      : `${result.completed || 0} files ${request.operation === "move" ? "moved" : "copied"}`,
+    Boolean(failed),
+  );
+  await browseWorkspace();
+}
+async function moveSelectionTo(destination) {
+  await setExplorerClipboard(
+    destination.accountId === workspaceTarget.accountId &&
+      destination.bucketName === workspaceTarget.bucketName
+      ? "move"
+      : "copy",
+  );
+  await pasteExplorer({
+    ...destination,
+    accountName: accountName(destination.accountId),
+  });
+}
+async function deleteSelection() {
+  const items = selectedExplorerItems();
+  if (!items.length) return;
+  const label =
+    items.length === 1
+      ? `“${items[0].name}”`
+      : `${items.length} selected items`;
+  if (!confirm(`Delete ${label}? This cannot be undone.`)) return;
+  setOperation("delete", `Deleting ${label}…`);
+  const result = await send({
+    type: "cfDeleteObjects",
+    source: explorerSource(),
+    entries: clipboardEntries(items),
+  });
+  if (!result?.ok)
+    return finishOperation(
+      friendlyError(
+        new Error(result?.error || ""),
+        "delete the selected items",
+      ),
+      true,
+    );
+  finishOperation(
+    result.errors?.length
+      ? `${result.completed} files deleted · ${result.errors.length} failed`
+      : `${result.completed} files deleted`,
+    Boolean(result.errors?.length),
+  );
+  await browseWorkspace();
+}
+function beginExplorerRename(item) {
+  hideExplorerMenu();
+  const row = rootRow(item.id);
+  if (!row) return;
+  const cell = row.querySelector(".file-name");
+  const icon = cell.querySelector(".file-icon");
+  const input = document.createElement("input");
+  input.className = "inline-rename";
+  input.value = item.name;
+  cell.replaceChildren(icon, input);
+  input.focus();
+  const dot = item.folder ? -1 : item.name.lastIndexOf(".");
+  input.setSelectionRange(0, dot > 0 ? dot : item.name.length);
+  let done = false;
+  const finish = async (save) => {
+    if (done) return;
+    done = true;
+    if (!save || !input.value.trim() || input.value.trim() === item.name)
+      return renderFileItems();
+    setOperation("rename", `Renaming “${item.name}”…`);
+    const result = await send({
+      type: "cfRenameEntry",
+      source: explorerSource(),
+      entry: { key: item.key, folder: item.folder, displayName: item.name },
+      newName: input.value.trim(),
+    });
+    if (!result?.ok || result.errors?.length || result.conflicts?.length) {
+      finishOperation(
+        result?.conflicts?.length
+          ? `“${input.value.trim()}” already exists.`
+          : friendlyError(
+              new Error(result?.error || result.errors?.[0]?.error || ""),
+              "rename this item",
+            ),
+        true,
+      );
+      return renderFileItems();
+    }
+    finishOperation(`Renamed to “${input.value.trim()}”`);
+    await browseWorkspace();
+  };
+  input.onkeydown = (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      finish(true);
+    }
+    if (e.key === "Escape") {
+      e.preventDefault();
+      finish(false);
+    }
+  };
+  input.onblur = () => finish(true);
+}
+function beginNewFolder() {
+  if (!workspaceTarget) return;
+  const root = $("workspace-objects");
+  const row = document.createElement("div");
+  row.className = "file-row folder selected";
+  row.innerHTML = `<div class="file-cell file-name"><span class="file-icon">${iconSvg("folder")}</span><input class="inline-rename" value="New folder"></div><div class="file-cell">—</div><div class="file-cell">—</div><div class="file-cell">Folder</div>`;
+  root.prepend(row);
+  const input = row.querySelector("input");
+  input.focus();
+  input.select();
+  let done = false;
+  const finish = async (save) => {
+    if (done) return;
+    done = true;
+    if (!save) return renderFileItems();
+    setOperation("folder", `Creating “${input.value.trim()}”…`);
+    const result = await send({
+      type: "cfCreateFolder",
+      ...explorerSource(),
+      prefix: workspacePrefix,
+      name: input.value.trim(),
+    });
+    if (!result?.ok) {
+      finishOperation(
+        friendlyError(new Error(result?.error || ""), "create the folder"),
+        true,
+      );
+      return renderFileItems();
+    }
+    finishOperation("Folder created");
+    await browseWorkspace();
+  };
+  input.onkeydown = (e) => {
+    if (e.key === "Enter") finish(true);
+    if (e.key === "Escape") finish(false);
+  };
+  input.onblur = () => finish(true);
+}
+async function explorerDownload(item) {
+  if (item.folder) return;
+  setOperation("download", `Preparing “${item.name}” for download…`);
+  const result = await send({
+    type: "cfDownloadObject",
+    ...explorerSource(),
+    key: item.key,
+    filename: item.name,
+  });
+  if (!result?.ok) {
+    finishOperation(friendlyError(new Error(result?.error || ""), "download this file"), true);
+    return;
+  }
+  await refreshProfiles();
+  finishOperation(`Downloading “${item.name}”…`);
+}
+async function showProperties(item) {
+  if (item.folder) {
+    $("properties-title").textContent = item.name;
+    renderProperties([
+      ["Name", item.name],
+      ["Type", "Folder"],
+      ["Bucket", workspaceTarget.bucketName],
+      ["Path", item.key],
+    ]);
+    return;
+  }
+  setOperation("properties", "Loading properties…");
+  const result = await send({
+    type: "cfObjectProperties",
+    ...explorerSource(),
+    key: item.key,
+  });
+  if (!result?.ok)
+    return finishOperation(
+      friendlyError(new Error(result?.error || ""), "load properties"),
+      true,
+    );
+  await refreshProfiles();
+  explorerOperation = null;
+  renderOperation();
+  const object = result.object || {};
+  const profile = r2Profiles().find(
+    (p) =>
+      p.accountId === workspaceTarget.accountId &&
+      p.bucketName === workspaceTarget.bucketName,
+  );
+  $("properties-title").textContent = item.name;
+  renderProperties([
+    ["Name", item.name],
+    ["Type", item.type],
+    ["Size", formatBytes(object.size || item.size)],
+    ["Modified", object.uploaded || item.modified?.toLocaleString() || "—"],
+    ["Bucket", workspaceTarget.bucketName],
+    ["Path", workspacePrefix || "/"],
+    ["Full object key", item.key],
+    ["Public URL", profile ? publicObjectUrl(profile, item.key) : "—"],
+    [
+      "Content-Type",
+      object.httpMetadata?.contentType || "application/octet-stream",
+    ],
+    ["ETag", object.etag || object.httpEtag || "—"],
+    ["Custom metadata", JSON.stringify(object.customMetadata || {}, null, 2)],
+  ]);
+}
+function renderProperties(entries) {
+  const content = $("properties-content");
+  content.replaceChildren();
+  for (const [label, value] of entries) {
+    const a = document.createElement("div");
+    a.className = "property-label";
+    a.textContent = label;
+    const b = document.createElement("div");
+    b.className = "property-value";
+    if (label.includes("key") || label === "Custom metadata") {
+      const code = document.createElement("code");
+      code.textContent = String(value);
+      b.append(code);
+    } else b.textContent = String(value);
+    content.append(a, b);
+  }
+  $("explorer-properties").showModal();
+}
+async function copyItemUrl(item) {
+  const profile = await ensurePrepared(workspaceTarget);
+  await navigator.clipboard.writeText(publicObjectUrl(profile, item.key));
+  finishOperation("URL copied");
+}
+async function explorerUploadFiles(files, prefix = workspacePrefix) {
+  if (!files?.length) return;
+  const profile = await ensurePrepared(workspaceTarget);
+  await refreshProfiles();
+  $("local-profile").value = profile.id;
+  $("local-prefix").value = normalizePrefix(prefix).replace(/\/$/, "");
+  await uploadLocalFiles(files);
+}
+function handleLocalDrop(event, prefix) {
+  const files = event.dataTransfer?.files;
+  if (files?.length) explorerUploadFiles(files, prefix);
+}
+async function dropOnBucket(event, accountId, bucketName) {
+  event.preventDefault();
+  if (event.dataTransfer.files?.length) {
+    await goLocation(accountId, bucketName);
+    return explorerUploadFiles(event.dataTransfer.files, "");
+  }
+  if (explorerSelected.size)
+    moveSelectionTo({ accountId, bucketName, prefix: "" });
+}
+function menuButton(label, action, enabled = true) {
+  const b = document.createElement("button");
+  b.className = "menu-item";
+  b.type = "button";
+  b.role = "menuitem";
+  b.textContent = label;
+  b.disabled = !enabled;
+  b.onclick = () => {
+    hideExplorerMenu();
+    action?.();
+  };
+  return b;
+}
+function showExplorerMenu(x, y, item) {
+  const menu = $("explorer-menu");
+  menu.replaceChildren();
+  const selected = selectedExplorerItems();
+  const hasSelection = selected.length > 0;
+  const sep = () => {
+    const e = document.createElement("div");
+    e.className = "menu-separator";
+    e.role = "separator";
+    menu.append(e);
+  };
+  if (item) {
+    menu.append(
+      menuButton(item.folder ? "Open" : "Open / Preview", () =>
+        openExplorerItem(item),
+      ),
+    );
+    if (!item.folder)
+      menu.append(
+        menuButton("Download", () =>
+          selected.filter((x) => !x.folder).forEach(explorerDownload),
+        ),
+      );
+    sep();
+    menu.append(
+      menuButton("Cut", () => setExplorerClipboard("move"), hasSelection),
+      menuButton("Copy", () => setExplorerClipboard("copy"), hasSelection),
+      menuButton(
+        "Paste",
+        () =>
+          pasteExplorer(
+            item.folder ? { ...explorerSource(), prefix: item.key } : undefined,
+          ),
+        Boolean(explorerClipboard),
+      ),
+    );
+    sep();
+    const label = document.createElement("div");
+    label.className = "menu-label";
+    label.textContent = "Send to";
+    menu.append(label);
+    for (const account of explorerAccounts)
+      for (const bucket of explorerBuckets.get(account.id) || []) {
+        if (
+          account.id === workspaceTarget.accountId &&
+          bucket.name === workspaceTarget.bucketName
+        )
+          continue;
+        menu.append(
+          menuButton(
+            `${account.name} · ${bucket.name}`,
+            async () => {
+              await setExplorerClipboard("copy");
+              await pasteExplorer({
+                accountId: account.id,
+                bucketName: bucket.name,
+                accountName: account.name,
+                prefix: "",
+              });
+            },
+            hasSelection,
+          ),
+        );
+      }
+    sep();
+    menu.append(
+      menuButton(
+        "Rename",
+        () => beginExplorerRename(item),
+        selected.length === 1,
+      ),
+      menuButton("Delete", deleteSelection, hasSelection),
+    );
+    if (item.folder)
+      menu.append(
+        menuButton("New folder", async () => {
+          await goLocation(
+            workspaceTarget.accountId,
+            workspaceTarget.bucketName,
+            item.key,
+          );
+          beginNewFolder();
+        }),
+      );
+    sep();
+    if (!item.folder)
+      menu.append(menuButton("Copy URL", () => copyItemUrl(item)));
+    menu.append(
+      menuButton(
+        "Properties",
+        () => showProperties(item),
+        selected.length === 1,
+      ),
+    );
+  } else
+    menu.append(
+      menuButton("Paste", pasteExplorer, Boolean(explorerClipboard)),
+      menuButton("New folder", beginNewFolder),
+      menuButton("Upload files", () => $("local-files").click()),
+      menuButton("Refresh", () => browseWorkspace()),
+    );
+  menu.hidden = false;
+  requestAnimationFrame(() => {
+    menu.style.left = `${Math.max(8, Math.min(x, innerWidth - menu.offsetWidth - 8))}px`;
+    menu.style.top = `${Math.max(8, Math.min(y, innerHeight - menu.offsetHeight - 8))}px`;
+    menu.querySelector("button:not(:disabled)")?.focus();
+  });
+}
+function hideExplorerMenu() {
+  $("explorer-menu").hidden = true;
+}
+function wireWorkspace() {
+  const drop = $("local-dropzone"),
+    picker = $("local-files");
+  if (drop && picker) {
+    drop.onclick = () => picker.click();
+    drop.onkeydown = (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        picker.click();
+      }
+    };
+    picker.onchange = async () => {
+      await explorerUploadFiles(picker.files);
+      picker.value = "";
+    };
+    for (const n of ["dragenter", "dragover"])
+      drop.addEventListener(n, (e) => {
+        e.preventDefault();
+        drop.classList.add("drag");
+      });
+    for (const n of ["dragleave", "drop"])
+      drop.addEventListener(n, (e) => {
+        e.preventDefault();
+        drop.classList.remove("drag");
+      });
+    drop.ondrop = (e) =>
+      explorerUploadFiles(e.dataTransfer?.files, workspacePrefix);
+  }
+  $("workspace-refresh").onclick = () => browseWorkspace();
+  $("workspace-search").oninput = renderFileItems;
+  $("preview-expand")?.addEventListener("click", () =>
+    setWorkspacePreviewExpanded(!workspacePreviewExpanded),
+  );
+  $("explorer-new-folder").onclick = beginNewFolder;
+  $("explorer-upload").onclick = () => picker.click();
+  $("properties-close").onclick = () => $("explorer-properties").close();
+  $("explorer-back").onclick = () => navigateHistory(-1);
+  $("explorer-forward").onclick = () => navigateHistory(1);
+  $("explorer-up").onclick = () => {
+    const parts = workspacePrefix.split("/").filter(Boolean);
+    parts.pop();
+    goLocation(
+      workspaceTarget.accountId,
+      workspaceTarget.bucketName,
+      parts.join("/"),
+    );
+  };
+  document.querySelectorAll(".file-head button").forEach(
+    (b) =>
+      (b.onclick = () => {
+        const field = b.dataset.sort;
+        explorerSort =
+          explorerSort.field === field
+            ? { field, direction: -explorerSort.direction }
+            : { field, direction: 1 };
+        renderFileItems();
+        renderExplorerChrome();
+      }),
+  );
+  document.addEventListener("click", (e) => {
+    if (!e.target.closest("#explorer-menu")) hideExplorerMenu();
+  });
+  $("explorer").onkeydown = (e) => {
+    if (e.target.matches("input,select,textarea")) return;
+    const selected = selectedExplorerItems();
+    const command = e.ctrlKey || e.metaKey;
+    if (command && e.key.toLowerCase() === "a") {
+      e.preventDefault();
+      explorerSelected = new Set(sortedVisibleItems().map((x) => x.id));
+      renderFileItems();
+    } else if (command && e.key.toLowerCase() === "c")
+      setExplorerClipboard("copy");
+    else if (command && e.key.toLowerCase() === "x")
+      setExplorerClipboard("move");
+    else if (command && e.key.toLowerCase() === "v") {
+      e.preventDefault();
+      pasteExplorer();
+    } else if (command && e.key.toLowerCase() === "f") {
+      e.preventDefault();
+      $("workspace-search").focus();
+    } else if (e.key === "F2" && selected.length === 1) {
+      e.preventDefault();
+      beginExplorerRename(selected[0]);
+    } else if (e.key === "Delete") {
+      e.preventDefault();
+      deleteSelection();
+    } else if (e.key === "Enter" && selected.length === 1)
+      openExplorerItem(selected[0]);
+    else if (e.key === "Escape") {
+      hideExplorerMenu();
+      explorerSelected.clear();
+      renderFileItems();
+    } else if (e.key === "Backspace" || (e.altKey && e.key === "ArrowLeft")) {
+      e.preventDefault();
+      navigateHistory(-1);
+    } else if (e.altKey && e.key === "ArrowRight") {
+      e.preventDefault();
+      navigateHistory(1);
+    }
+  };
+}
+async function navigateHistory(delta) {
+  const next = explorerHistoryIndex + delta;
+  if (next < 0 || next >= explorerHistory.length) return;
+  explorerHistoryIndex = next;
+  const loc = explorerHistory[next];
+  await goLocation(loc.accountId, loc.bucketName, loc.prefix, false);
+  updateNavButtons();
 }
 
 function transferKey(profile, location){
@@ -710,8 +1863,7 @@ async function openTransferLocation(item,parts){
     select.value=parts.profile.id;
     workspaceTarget=parts.profile;
   }
-  $("workspace-prefix").value=folder;
-  await browseWorkspace();
+  await goLocation(parts.profile.accountId,parts.profile.bucketName,folder);
   $("local-tools")?.scrollIntoView({behavior:"smooth",block:"start"});
 }
 async function beginRename(item,parts,nameEl,cell){
@@ -853,6 +2005,7 @@ async function refreshCloudflare(){
   $("connect-cloudflare").hidden=connected;
   $("disconnect-cloudflare").hidden=!connected;
   $("cloudflare-panel").hidden=!connected;
+  $("local-tools").hidden=!connected;
   if(!connected)return;
 
   setStatus("hero-status","Cloudflare connected.","ok");
@@ -968,7 +2121,10 @@ window.addEventListener("focus",refreshDownloadsOnAccess);
   renderProfiles();
   wireWorkspace();
   renderWorkspaceProfiles();
-  if(workspaceTarget)await browseWorkspace();
   await refreshCloudflare();
+  const auth=(await chrome.storage.local.get("cloudflareAuth")).cloudflareAuth;
+  $("local-tools").hidden=!auth?.accessToken;
+  explorerClipboard=(await chrome.storage.session.get("explorerClipboard")).explorerClipboard||null;
+  if(auth?.accessToken)await loadExplorerInventory().catch(error=>{$("explorer-status").textContent=friendlyError(error,"load Cloudflare storage");});
   await renderHistory();
 })();

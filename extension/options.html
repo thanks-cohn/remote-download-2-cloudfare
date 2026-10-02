@@ -119,6 +119,18 @@
     .text-preview{width:100%;max-height:500px;overflow:auto;margin:0;padding:14px;white-space:pre-wrap;word-break:break-word;background:#050308;color:#e8e1ef;border-radius:10px;font:12px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace;text-align:left}
     @media(max-width:900px){.tree-row{grid-template-columns:20px 1fr 80px 1fr}.tree-row .mini{grid-column:auto}}
     @media(max-width:760px){.grid,.grid.two,.workspace-grid{grid-template-columns:1fr}}
+
+    .explorer-heading{align-items:center}.explorer{position:relative;border:1px solid #302242;border-radius:16px;background:#0b0810;box-shadow:0 18px 55px rgba(0,0,0,.25);overflow:hidden;outline:none}
+    .explorer:focus-visible{box-shadow:0 0 0 3px rgba(139,92,246,.2),0 18px 55px rgba(0,0,0,.25)}
+    .explorer-toolbar{display:grid;grid-template-columns:auto minmax(220px,1fr) auto minmax(180px,260px);align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid var(--line);background:#120d19}
+    .nav-buttons{display:flex;gap:4px}.icon-button{width:34px;height:34px;padding:0;border-radius:8px;background:transparent;color:#d8cfdf;border:1px solid transparent;font-size:17px}.icon-button:hover:not(:disabled){background:#21172c;border-color:#39294c}.icon-button:disabled{opacity:.3;cursor:default}
+    .breadcrumbs{min-width:0;display:flex;align-items:center;overflow:auto;border:1px solid var(--line);border-radius:9px;background:#0b0810;padding:3px}.crumb{background:transparent;color:#dcd4e5;border-radius:6px;padding:5px 7px;white-space:nowrap;font-weight:650}.crumb:hover{background:#251932;color:#fff}.crumb+.crumb:before{content:'›';color:#6f6379;margin-right:10px}
+    .explorer-actions{display:flex;gap:6px}.toolbar-button{padding:7px 11px;border-radius:8px;background:#1a1223;color:#dcd2e7;border:1px solid #342544;font-size:12px}.toolbar-button.primary{background:#7147d4;border-color:#8458e2}.explorer-search{display:flex;align-items:center;gap:7px;border:1px solid var(--line);border-radius:9px;background:#0b0810;padding-left:10px}.explorer-search:focus-within{border-color:#7150bd;box-shadow:0 0 0 3px rgba(139,92,246,.1)}.explorer-search input{border:0;background:transparent;box-shadow:none!important;padding:8px 8px 8px 0}
+    .explorer-body{display:grid;grid-template-columns:220px minmax(390px,1fr) 280px;min-height:460px}.explorer-sidebar{padding:13px 9px;border-right:1px solid var(--line);background:#0e0a14;overflow:auto}.sidebar-title{padding:3px 9px 9px;color:#8f829b;text-transform:uppercase;letter-spacing:.08em;font-size:10px;font-weight:850}.account-group{margin-bottom:10px}.account-label{padding:7px 9px;color:#d5ccdd;font-size:12px;font-weight:750}.source-item{width:100%;display:flex;gap:9px;align-items:center;text-align:left;background:transparent;color:#bfb5ca;padding:7px 10px;border:0;border-radius:7px;font-weight:600;overflow:hidden}.source-item:hover{background:#191221;color:#fff}.source-item.active{background:#281b38;color:#eee3ff}.source-item span:last-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .explorer-main{min-width:0;background:#09070d;display:flex;flex-direction:column}.file-head,.file-row{display:grid;grid-template-columns:minmax(190px,1fr) 90px 135px 100px;align-items:center}.file-head{height:36px;border-bottom:1px solid var(--line);background:#100b16}.file-head button{padding:0 12px;text-align:left;background:transparent;color:#887c94;border:0;border-right:1px solid #21172d;border-radius:0;font-size:10px;text-transform:uppercase;letter-spacing:.06em}.file-row{min-height:38px;border-bottom:1px solid rgba(42,29,59,.58);color:#cbc3d3;cursor:default;outline:none;user-select:none}.file-row:hover{background:#14101a}.file-row.drop-target{background:#35224b;box-shadow:inset 0 0 0 1px #9c6bf4}.file-row.cut{opacity:.5}.file-row.selected{background:#2a1c3b;color:#fff}.file-cell{padding:8px 12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}.file-name{display:flex;gap:9px;align-items:center;font-weight:670}.file-icon{width:18px;height:18px;display:inline-flex;align-items:center;justify-content:center;flex:0 0 18px}.file-icon svg,.source-icon svg{width:17px;height:17px;display:block}.folder .file-icon{color:#c5a6ff}.file-muted{color:#817688}.file-list{flex:1;overflow:auto;min-height:300px}.file-empty{padding:70px 24px;text-align:center;color:#817688}.file-empty strong{display:block;color:#cfc6d8;font-size:14px;margin-bottom:5px}.explorer-status{padding:0 14px;color:var(--red);font-size:11px}.explorer-preview{border-width:0 0 0 1px;border-radius:0;min-height:0;background:#0d0913}.explorer-body.expanded{grid-template-columns:1fr}.explorer-body.expanded .explorer-sidebar,.explorer-body.expanded .explorer-main{display:none}.explorer-body.expanded .explorer-preview{display:flex;min-height:620px;border-left:0}.explorer-footer{height:31px;display:flex;justify-content:space-between;align-items:center;padding:0 13px;border-top:1px solid var(--line);color:#8f8498;font-size:11px;background:#100b16}.location-mobile{display:none}.operation-spinner{display:inline-block;width:10px;height:10px;margin-right:7px;border:2px solid #635571;border-top-color:#c6a6ff;border-radius:50%;animation:spin .8s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}.context-menu{position:fixed;z-index:50;min-width:190px;padding:6px;background:#171020;border:1px solid #3d2b53;border-radius:10px;box-shadow:0 18px 50px rgba(0,0,0,.55)}.menu-item{display:block;width:100%;padding:8px 10px;text-align:left;background:transparent;color:#e2dae9;border:0;border-radius:6px;font-weight:600;font-size:12px}.menu-item:hover:not(:disabled){background:#302044}.menu-item:disabled{opacity:.36;cursor:default}.menu-separator{height:1px;background:#342542;margin:5px}.menu-label{padding:6px 10px;color:#83758f;font-size:10px;text-transform:uppercase;letter-spacing:.08em}.inline-rename{width:100%;padding:4px 7px;border-radius:6px}.load-more{margin:14px auto;display:block}.properties-dialog{width:min(520px,calc(100vw - 32px));padding:0;border:1px solid #44305c;border-radius:16px;background:#120d19;color:var(--text);box-shadow:0 30px 100px rgba(0,0,0,.65)}.properties-dialog::backdrop{background:rgba(5,3,8,.72);backdrop-filter:blur(3px)}.properties-head{display:flex;align-items:center;justify-content:space-between;padding:20px 22px;border-bottom:1px solid var(--line)}.properties-head h3{margin:2px 0 0;font-size:19px}.eyebrow{color:#a58ebd;font-size:10px;text-transform:uppercase;letter-spacing:.12em}.properties-content{display:grid;grid-template-columns:125px minmax(0,1fr);gap:10px 16px;padding:22px;font-size:12px}.property-label{color:#8e8298}.property-value{word-break:break-word}.property-value code{font:11px ui-monospace,SFMono-Regular,Consolas,monospace;color:#d8c5ec}
+    @media(max-width:1120px){.explorer-actions{display:none}}
+    @media(max-width:1000px){.explorer-body{grid-template-columns:190px minmax(360px,1fr)}.explorer-preview{display:none}}
+    @media(max-width:760px){.explorer-toolbar{grid-template-columns:auto 1fr}.explorer-actions{display:flex;justify-content:flex-end}.breadcrumbs{display:none}.explorer-search{grid-column:1/-1}.explorer-body{display:block}.explorer-sidebar{display:none}.location-mobile{display:block;padding:10px}.file-head,.file-row{grid-template-columns:minmax(160px,1fr) 75px 105px}.file-head>*:last-child,.file-row>*:last-child{display:none}}
   </style>
 </head>
 <body>
@@ -187,25 +199,43 @@
       <div id="local-upload-status" class="status"></div>
     </div>
 
-    <div class="section-head" style="margin-top:18px">
-      <div><h2>Explore</h2><div class="section-note">Click an object to preview it from its REDOWN URL. Images, video, audio, PDF, and text/code formats preview in place.</div></div>
-      <button id="workspace-refresh" class="ghost">Refresh</button>
+    <div class="section-head explorer-heading" style="margin-top:22px">
+      <div><h2>Explore</h2><div class="section-note">Browse every bucket connected to Cloudflare—no destination preset required.</div></div>
+      <button id="workspace-refresh" class="ghost" title="Refresh current folder">Refresh</button>
     </div>
-    <div class="card">
-      <div class="grid two">
-        <div><label for="workspace-prefix">Prefix filter</label><input id="workspace-prefix" placeholder="Leave empty for whole bucket"></div>
-        <div style="display:flex;align-items:end"><button id="workspace-browse" class="secondary">Explore bucket</button></div>
-      </div>
-      <div class="workspace-grid">
-        <div id="workspace-objects" class="objects" style="max-height:500px"></div>
-        <div id="workspace-preview" class="preview">
-          <div class="preview-head">
-            <div class="meta">Choose a file on the left to preview it or inspect its details.</div>
-            <button id="preview-expand" class="ghost" type="button">Expand</button>
-          </div>
+    <div id="explorer" class="explorer" tabindex="0">
+      <div class="explorer-toolbar">
+        <div class="nav-buttons" aria-label="Navigation">
+          <button id="explorer-back" class="icon-button" title="Back" aria-label="Back">←</button>
+          <button id="explorer-forward" class="icon-button" title="Forward" aria-label="Forward">→</button>
+          <button id="explorer-up" class="icon-button" title="Up one level" aria-label="Up one level">↑</button>
         </div>
+        <nav id="explorer-breadcrumbs" class="breadcrumbs" aria-label="Current location"></nav>
+        <div class="explorer-actions"><button id="explorer-new-folder" class="toolbar-button" title="New folder">New folder</button><button id="explorer-upload" class="toolbar-button primary">Upload</button></div>
+        <div class="explorer-search"><span>⌕</span><input id="workspace-search" type="search" placeholder="Search this folder" aria-label="Search this folder"></div>
       </div>
+      <div class="explorer-body">
+        <aside class="explorer-sidebar">
+          <div class="sidebar-title">Cloudflare</div>
+          <div id="explorer-sources" class="source-tree"></div>
+        </aside>
+        <main id="explorer-main" class="explorer-main">
+          <div class="location-mobile"><label for="explorer-location">Location</label><select id="explorer-location"></select></div>
+          <div class="file-head" role="row"><button data-sort="name">Name</button><button data-sort="size">Size</button><button data-sort="modified">Modified</button><button data-sort="type">Type</button></div>
+          <div id="workspace-objects" class="file-list" role="grid" aria-label="Files and folders"></div>
+          <div id="explorer-status" class="explorer-status" aria-live="polite"></div>
+        </main>
+        <aside id="workspace-preview" class="preview explorer-preview">
+          <div class="preview-head"><div class="meta">Select a file to preview it or inspect its details.</div><button id="preview-expand" class="ghost" type="button">Expand</button></div>
+        </aside>
+      </div>
+      <div class="explorer-footer"><span id="explorer-count">No location selected</span><span id="explorer-operation" aria-live="polite"></span><span id="explorer-selection"></span></div>
     </div>
+    <div id="explorer-menu" class="context-menu" role="menu" hidden></div>
+    <dialog id="explorer-properties" class="properties-dialog">
+      <div class="properties-head"><div><div class="eyebrow">Properties</div><h3 id="properties-title"></h3></div><button id="properties-close" class="icon-button" aria-label="Close properties">×</button></div>
+      <div id="properties-content" class="properties-content"></div>
+    </dialog>
   </section>
 
   <section class="section">

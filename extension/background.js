@@ -68,8 +68,23 @@ function cleanName(value) {
   return name;
 }
 function cleanPrefix(value) {
-  return String(value || "").split("/").map(x => x.trim()).filter(Boolean)
-    .map(x => x.replace(/[^a-zA-Z0-9._ -]/g, "-")).join("/");
+  const parts = String(value || "").split("/").map(x => x.trim()).filter(Boolean);
+  if (parts.some(x => x === "." || x === "..")) throw new Error("Invalid object path");
+  return parts.map(x => x.replace(/[^a-zA-Z0-9._ -]/g, "-")).join("/");
+}
+async function uniqueKey(storage, requested) {
+  if (!(await storage.head(requested))) return requested;
+  const slash = requested.lastIndexOf("/");
+  const parent = slash >= 0 ? requested.slice(0, slash + 1) : "";
+  const name = slash >= 0 ? requested.slice(slash + 1) : requested;
+  const dot = name.lastIndexOf(".");
+  const stem = dot > 0 ? name.slice(0, dot) : name;
+  const extension = dot > 0 ? name.slice(dot) : "";
+  for (let index = 2; index < 10000; index++) {
+    const candidate = parent + stem + " (" + index + ")" + extension;
+    if (!(await storage.head(candidate))) return candidate;
+  }
+  throw new Error("Could not choose an available filename");
 }
 function extensionForContentType(contentType) {
   const type = String(contentType || "").split(";")[0].trim().toLowerCase();
@@ -214,17 +229,23 @@ export default {
       });
     }
 
-    if (request.method === "GET") return Response.json({
-      ok: true,
-      service: "REDOWN",
-      secretConfigured: Boolean(REDOWN_SHARED_SECRET),
-      storageBound: Boolean(env.STORAGE)
-    });
-    if (request.method !== "POST") return Response.json({ ok: false, error: "Method not allowed" }, { status: 405 });
     const auth = request.headers.get("authorization") || "";
-    if (!REDOWN_SHARED_SECRET || auth !== \`Bearer \${REDOWN_SHARED_SECRET}\`) {
-      return Response.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+    const authorized = Boolean(REDOWN_SHARED_SECRET) && auth === \`Bearer \${REDOWN_SHARED_SECRET}\`;
+    if (request.method === "GET" && requestUrl.pathname === "/object") {
+      if (!authorized) return Response.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+      let key;
+      try { key = cleanPrefix(requestUrl.searchParams.get("key") || ""); } catch (error) { return Response.json({ ok:false, error:error.message }, { status:400 }); }
+      const object = key && await env.STORAGE.get(key);
+      if (!object) return Response.json({ ok:false, error:"Object not found" }, { status:404 });
+      const headers = new Headers();
+      object.writeHttpMetadata(headers);
+      headers.set("content-length", String(object.size));
+      headers.set("x-redown-metadata", encodeURIComponent(JSON.stringify(object.customMetadata || {})));
+      return new Response(object.body, { status:200, headers });
     }
+    if (request.method === "GET") return Response.json({ ok:true, service:"REDOWN", secretConfigured:Boolean(REDOWN_SHARED_SECRET), storageBound:Boolean(env.STORAGE) });
+    if (request.method !== "POST") return Response.json({ ok:false, error:"Method not allowed" }, { status:405 });
+    if (!authorized) return Response.json({ ok:false, error:"Unauthorized" }, { status:401 });
     try {
       if (request.headers.get("x-redown-action") === "upload-local") {
         const rawFilename = request.headers.get("x-redown-filename") || "upload";
@@ -294,6 +315,49 @@ export default {
       }
 
       const body = await request.json();
+
+      if (body.action === "headObject") {
+        const key = cleanPrefix(body.key);
+        const head = key && await env.STORAGE.head(key);
+        if (!head) return Response.json({ ok:false, error:"Object not found" }, { status:404 });
+        return Response.json({ ok:true, object:{ key, size:head.size, etag:head.etag, httpEtag:head.httpEtag, uploaded:head.uploaded, httpMetadata:head.httpMetadata, customMetadata:head.customMetadata } });
+      }
+      if (body.action === "deleteKeys") {
+        const keys = Array.from(new Set((body.keys || []).map(cleanPrefix).filter(Boolean))).slice(0, 100);
+        if (!keys.length) throw new Error("No objects selected");
+        await env.STORAGE.delete(keys);
+        return Response.json({ ok:true, deleted:keys });
+      }
+      if (body.action === "transferBatch") {
+        const entries = Array.isArray(body.entries) ? body.entries.slice(0, 25) : [];
+        const sourceWorkerUrl = String(body.sourceWorkerUrl || "").replace(/\\/+$/, "");
+        const sourceToken = String(body.sourceToken || "");
+        const conflict = ["replace","keep","skip"].includes(body.conflict) ? body.conflict : "skip";
+        const results = [];
+        for (const entry of entries) {
+          const sourceKey = cleanPrefix(entry.sourceKey);
+          let destinationKey = cleanPrefix(entry.destinationKey);
+          try {
+            const existing = await env.STORAGE.head(destinationKey);
+            if (existing && conflict === "skip") { results.push({ sourceKey, destinationKey, status:"conflict" }); continue; }
+            if (existing && conflict === "keep") destinationKey = await uniqueKey(env.STORAGE, destinationKey);
+            if (entry.sameBucket) {
+              const object = await env.STORAGE.get(sourceKey);
+              if (!object) throw new Error("Source object was not found");
+              await env.STORAGE.put(destinationKey, object.body, { httpMetadata:object.httpMetadata, customMetadata:{ ...(object.customMetadata || {}), copiedAt:new Date().toISOString() } });
+            } else {
+              if (!/^https:\\/\\/[^/]+$/.test(sourceWorkerUrl) || !sourceToken) throw new Error("Source bucket is not ready");
+              const response = await fetch(sourceWorkerUrl + "/object?key=" + encodeURIComponent(sourceKey), { headers:{ authorization:"Bearer " + sourceToken } });
+              if (!response.ok || !response.body) throw new Error("Source object was not available");
+              let customMetadata = {};
+              try { customMetadata = JSON.parse(decodeURIComponent(response.headers.get("x-redown-metadata") || "%7B%7D")); } catch {}
+              await env.STORAGE.put(destinationKey, response.body, { httpMetadata:{ contentType:response.headers.get("content-type") || "application/octet-stream" }, customMetadata:{ ...customMetadata, copiedAt:new Date().toISOString() } });
+            }
+            results.push({ sourceKey, destinationKey, status:"copied" });
+          } catch (error) { results.push({ sourceKey, destinationKey, status:"failed", error:error.message || String(error) }); }
+        }
+        return Response.json({ ok:true, results });
+      }
 
       if (body.action === "renameObject") {
         const oldKey = cleanPrefix(body.oldKey);
@@ -693,13 +757,35 @@ async function disconnectCloudflare() {
   await chrome.storage.local.remove("cloudflareAuth");
 }
 async function listCloudflareAccounts() {
-  const body = await cfJson("/accounts?per_page=50");
-  return Array.isArray(body) ? body.map(x => ({ id: x.id, name: x.name })) : [];
+  const accounts = [];
+  for (let page = 1; page <= 20; page++) {
+    const res = await cfFetch(`/accounts?per_page=50&page=${page}`);
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok || body.success === false) throw new Error(cloudflareErrorMessage(body, `Could not load Cloudflare accounts (${res.status})`));
+    const batch = Array.isArray(body.result) ? body.result : [];
+    accounts.push(...batch.map(x => ({ id:x.id, name:x.name })));
+    const totalPages = Number(body?.result_info?.total_pages || 0);
+    if (!batch.length || batch.length < 50 || (totalPages && page >= totalPages)) break;
+  }
+  return accounts;
 }
 async function listBuckets(accountId) {
-  const result = await cfJson(`/accounts/${accountId}/r2/buckets`);
-  const buckets = result?.buckets || [];
-  return buckets.map(x => ({ name: x.name, location: x.location, jurisdiction: x.jurisdiction }));
+  const buckets = [];
+  let cursor = "";
+  for (let page = 0; page < 100; page++) {
+    const params = new URLSearchParams({ per_page:"100" });
+    if (cursor) params.set("cursor", cursor);
+    const res = await cfFetch(`/accounts/${accountId}/r2/buckets?${params}`);
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok || body.success === false) throw new Error(cloudflareErrorMessage(body, `Could not load R2 buckets (${res.status})`));
+    const result = body.result || {};
+    const batch = Array.isArray(result?.buckets) ? result.buckets : (Array.isArray(result) ? result : []);
+    buckets.push(...batch.map(x => ({ name:x.name, location:x.location, jurisdiction:x.jurisdiction })));
+    const next = result?.cursor || body?.result_info?.cursor || "";
+    if (!next || next === cursor) break;
+    cursor = next;
+  }
+  return buckets;
 }
 async function createBucket(accountId, name, locationHint = "") {
   const clean = String(name || "").toLowerCase().trim();
@@ -731,7 +817,7 @@ async function ensureWorkersSubdomain(accountId) {
   }
   throw new Error("Could not create a workers.dev subdomain for this Cloudflare account");
 }
-async function provisionCloudflareProfile({ accountId, accountName, bucketName, profileName, folders }) {
+async function provisionCloudflareProfile({ accountId, accountName, bucketName, profileName, folders, explorerOnly = false }) {
   if (!accountId || !bucketName) throw new Error("Choose an account and bucket");
 
   const profiles = await getProfiles();
@@ -832,7 +918,7 @@ async function provisionCloudflareProfile({ accountId, accountName, bucketName, 
     },
     body: JSON.stringify({
       action: "ensurePrefixes",
-      prefixes: Object.values(desiredFolders)
+      prefixes: explorerOnly ? [] : Object.values(desiredFolders)
     })
   });
   const prefixBody = await prefixCheck.json().catch(() => ({}));
@@ -860,7 +946,9 @@ async function provisionCloudflareProfile({ accountId, accountName, bucketName, 
     folders: desiredFolders,
     defaultCategory: existing?.defaultCategory || "files",
     menuTree: Array.isArray(existing?.menuTree) ? existing.menuTree : [],
-    showInContextMenu: existing?.showInContextMenu !== false,
+    workerVersion: 2,
+    explorerManaged: Boolean(explorerOnly),
+    showInContextMenu: explorerOnly ? false : (existing?.showInContextMenu !== false),
     menuOrder: existing?.menuOrder ?? profiles.length
   };
 
@@ -969,13 +1057,134 @@ function publicAssetUrl(profile, key) {
   return `${base}/${String(key).split("/").map(encodeURIComponent).join("/")}`;
 }
 
-async function listObjects(accountId, bucketName, prefix = "") {
-  const params = new URLSearchParams();
+async function listObjectsPage(accountId, bucketName, prefix = "", cursor = "") {
+  const params = new URLSearchParams({ per_page:"1000" });
   if (prefix) params.set("prefix", prefix);
-  const result = await cfJson(
-    `/accounts/${accountId}/r2/buckets/${encodeURIComponent(bucketName)}/objects?${params}`
-  );
-  return result?.objects || result || [];
+  if (cursor) params.set("cursor", cursor);
+  const res = await cfFetch(`/accounts/${accountId}/r2/buckets/${encodeURIComponent(bucketName)}/objects?${params}`);
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok || body.success === false) throw new Error(cloudflareErrorMessage(body, `Could not list bucket objects (${res.status})`));
+  const result = body.result ?? body;
+  const objects = Array.isArray(result?.objects) ? result.objects : (Array.isArray(result) ? result : []);
+  return { objects, cursor:result?.cursor || body?.result_info?.cursor || "", truncated:Boolean(result?.truncated) };
+}
+async function listObjects(accountId, bucketName, prefix = "", cursor = "") {
+  return listObjectsPage(accountId, bucketName, prefix, cursor);
+}
+async function listAllObjects(accountId, bucketName, prefix = "") {
+  const objects = [];
+  let cursor = "";
+  for (let page = 0; page < 1000; page++) {
+    const result = await listObjectsPage(accountId, bucketName, prefix, cursor);
+    objects.push(...result.objects);
+    if (!result.cursor || result.cursor === cursor) break;
+    cursor = result.cursor;
+  }
+  return objects;
+}
+function cleanExplorerPrefix(value) {
+  const parts = String(value || "").split("/").filter(Boolean);
+  if (parts.some(part => part === "." || part === ".." || /[\\\0]/.test(part))) throw new Error("That location is not valid");
+  return parts.join("/") + (parts.length ? "/" : "");
+}
+function cleanExplorerName(value) {
+  const name = String(value || "").trim();
+  if (!name || name === "." || name === ".." || /[\\/\0]/.test(name)) throw new Error("Enter a valid name without slashes");
+  return name.slice(0, 180);
+}
+async function preparedProfile(accountId, bucketName, accountName = "") {
+  let profiles = await getProfiles();
+  let profile = profiles.find(p => p.type === "cloudflare-r2" && p.accountId === accountId && p.bucketName === bucketName);
+  if (profile?.workerVersion >= 2) return profile;
+  return provisionCloudflareProfile({ accountId, accountName:accountName || profile?.accountName, bucketName, profileName:profile?.name || bucketName, folders:profile?.folders || {}, explorerOnly:Boolean(profile?.explorerManaged || !profile) });
+}
+async function callBucketWorker(profile, body) {
+  const response = await fetch(profile.workerUrl, { method:"POST", headers:{ authorization:`Bearer ${profile.token || ""}`, "content-type":"application/json" }, body:JSON.stringify(body) });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok || !result?.ok) throw new Error(result?.error || `Bucket operation failed (${response.status})`);
+  return result;
+}
+async function expandExplorerEntries(accountId, bucketName, entries) {
+  const expanded = [];
+  for (const entry of entries || []) {
+    if (entry.folder) {
+      const prefix = cleanExplorerPrefix(entry.key);
+      const objects = await listAllObjects(accountId, bucketName, prefix);
+      for (const object of objects) {
+        const key = object.key || object.name;
+        if (key) expanded.push({ key, root:prefix, displayName:entry.displayName || prefix.split("/").filter(Boolean).pop() });
+      }
+    } else {
+      const key = cleanExplorerPrefix(entry.key).replace(/\/$/, "");
+      if (key) expanded.push({ key, root:key, displayName:entry.displayName || key.split("/").pop() });
+    }
+  }
+  return Array.from(new Map(expanded.map(entry => [entry.key, entry])).values());
+}
+async function transferExplorerObjects(message) {
+  const operation = message.operation === "move" ? "move" : "copy";
+  const destinationPrefix = cleanExplorerPrefix(message.destination?.prefix || "");
+  const source = message.source || {};
+  const destination = message.destination || {};
+  if (!source.accountId || !source.bucketName || !destination.accountId || !destination.bucketName) throw new Error("Choose source and destination buckets");
+  const expanded = await expandExplorerEntries(source.accountId, source.bucketName, message.entries || []);
+  if (!expanded.length) throw new Error("The selected items no longer contain any files");
+  const sourceProfile = await preparedProfile(source.accountId, source.bucketName, source.accountName);
+  const destinationProfile = source.accountId === destination.accountId && source.bucketName === destination.bucketName
+    ? sourceProfile : await preparedProfile(destination.accountId, destination.bucketName, destination.accountName);
+  const roots = new Map((message.entries || []).map(entry => [cleanExplorerPrefix(entry.key), entry]));
+  const mapped = expanded.map(entry => {
+    const folderRoot = Array.from(roots.keys()).find(root => root.endsWith("/") && entry.key.startsWith(root));
+    const explicitDestination = (message.entries || []).find(candidate => candidate.key === entry.key)?.destinationKey;
+    const destinationKey = explicitDestination
+      ? cleanExplorerPrefix(explicitDestination).replace(/\/$/, "")
+      : folderRoot
+        ? destinationPrefix + (message.renameTo || folderRoot.split("/").filter(Boolean).pop()) + "/" + entry.key.slice(folderRoot.length)
+        : destinationPrefix + (message.renameTo || entry.key.split("/").pop());
+    if (sourceProfile.id === destinationProfile.id && destinationKey === entry.key) throw new Error("Source and destination are the same");
+    if (sourceProfile.id === destinationProfile.id && folderRoot && destinationKey.startsWith(folderRoot)) throw new Error("A folder cannot be moved into itself");
+    return { sourceKey:entry.key, destinationKey, sameBucket:sourceProfile.id === destinationProfile.id };
+  });
+  const results = [];
+  for (let index = 0; index < mapped.length; index += 25) {
+    const response = await callBucketWorker(destinationProfile, { action:"transferBatch", entries:mapped.slice(index,index+25), sourceWorkerUrl:sourceProfile.workerUrl, sourceToken:sourceProfile.token, conflict:message.conflict || "skip" });
+    results.push(...(response.results || []));
+  }
+  const copied = results.filter(result => result.status === "copied");
+  const deleteErrors = [];
+  if (operation === "move" && copied.length) {
+    for (let index = 0; index < copied.length; index += 100) {
+      try { await callBucketWorker(sourceProfile, { action:"deleteKeys", keys:copied.slice(index,index+100).map(result => result.sourceKey) }); }
+      catch (error) { deleteErrors.push(error.message || String(error)); }
+    }
+  }
+  return { total:mapped.length, completed:copied.length, conflicts:results.filter(x => x.status === "conflict"), errors:[...results.filter(x => x.status === "failed"), ...deleteErrors.map(error => ({ error }))], partialMove:Boolean(deleteErrors.length), results };
+}
+async function deleteExplorerObjects(message) {
+  const source = message.source || {};
+  const expanded = await expandExplorerEntries(source.accountId, source.bucketName, message.entries || []);
+  const profile = await preparedProfile(source.accountId, source.bucketName, source.accountName);
+  let completed = 0; const errors = [];
+  for (let index = 0; index < expanded.length; index += 100) {
+    try { const keys=expanded.slice(index,index+100).map(x => x.key); await callBucketWorker(profile,{action:"deleteKeys",keys});completed+=keys.length; }
+    catch (error) { errors.push(error.message || String(error)); }
+  }
+  return { total:expanded.length, completed, errors };
+}
+async function renameExplorerEntry(message) {
+  const entry = message.entry || {};
+  const name = cleanExplorerName(message.newName);
+  const key = String(entry.key || "");
+  const oldName = entry.displayName || key.replace(/\/$/, "").split("/").pop();
+  if (name === oldName) return { total:0, completed:0, errors:[] };
+  const parent = key.replace(/\/$/, "").split("/").slice(0,-1).join("/");
+  return transferExplorerObjects({ operation:"move", source:message.source, destination:{...message.source,prefix:parent}, entries:[entry], conflict:"skip", renameTo:name });
+}
+async function createExplorerFolder(message) {
+  const prefix = cleanExplorerPrefix(message.prefix) + cleanExplorerName(message.name);
+  const profile = await preparedProfile(message.accountId, message.bucketName, message.accountName);
+  await callBucketWorker(profile, { action:"ensurePrefixes", prefixes:[prefix] });
+  return { key:`${prefix}/` };
 }
 function objectKeyFromLocation(profile, location) {
   try {
@@ -1266,7 +1475,23 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       if (message?.type === "cfSetAssetCors" || message?.type === "cfSetAssetDomain") {
         return sendResponse({ ok:true, ...(await configureAssetDomain(message.accountId,message.bucketName,message.website)) });
       }
-      if (message?.type === "cfObjects") return sendResponse({ ok:true, objects:await listObjects(message.accountId,message.bucketName,message.prefix) });
+      if (message?.type === "cfObjects") return sendResponse({ ok:true, ...(await listObjects(message.accountId,message.bucketName,message.prefix,message.cursor)) });
+      if (message?.type === "cfPrepareBucket") return sendResponse({ ok:true, profile:await preparedProfile(message.accountId,message.bucketName,message.accountName) });
+      if (message?.type === "cfTransferObjects") return sendResponse({ ok:true, ...(await transferExplorerObjects(message)) });
+      if (message?.type === "cfDeleteObjects") return sendResponse({ ok:true, ...(await deleteExplorerObjects(message)) });
+      if (message?.type === "cfRenameEntry") return sendResponse({ ok:true, ...(await renameExplorerEntry(message)) });
+      if (message?.type === "cfCreateFolder") return sendResponse({ ok:true, ...(await createExplorerFolder(message)) });
+      if (message?.type === "cfObjectProperties") {
+        const profile=await preparedProfile(message.accountId,message.bucketName,message.accountName);
+        return sendResponse({ ok:true, profile:{workerUrl:profile.workerUrl,publicBaseUrl:profile.publicBaseUrl}, ...(await callBucketWorker(profile,{action:"headObject",key:message.key})) });
+      }
+      if (message?.type === "cfDownloadObject") {
+        const profile=await preparedProfile(message.accountId,message.bucketName,message.accountName);
+        const key=cleanExplorerPrefix(message.key).replace(/\/$/, "");
+        if (!key) throw new Error("Choose a file to download");
+        const downloadId=await chrome.downloads.download({ url:publicAssetUrl(profile,key), filename:cleanExplorerName(message.filename || key.split("/").pop()), saveAs:message.saveAs !== false });
+        return sendResponse({ ok:true, downloadId });
+      }
       if (message?.type === "recordLocalTransfer") {
         await recordTransfer({
           ok: message.ok !== false,
