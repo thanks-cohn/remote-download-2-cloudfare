@@ -503,7 +503,17 @@ async function showWorkspacePreview(obj,row,urlOverride=""){
   }
   let url=urlOverride;
   if(!url){
-    const privateRead=await send({type:"cfPrivateObjectUrl",...explorerSource(),key,ttl:900});
+    let privateRead=await send({type:"cfPrivateObjectUrl",...explorerSource(),key,ttl:900});
+    if(!privateRead?.ok && isTransientBucketAccessError(new Error(privateRead?.error||""))){
+      root.innerHTML='<div class="meta"><span class="operation-spinner"></span>Preparing bucket… Verifying Cloudflare access…</div>';
+      try{
+        await ensurePrepared(workspaceTarget);
+        privateRead=await send({type:"cfPrivateObjectUrl",...explorerSource(),key,ttl:900});
+      }catch(error){
+        root.textContent=friendlyError(error,"open this preview");
+        return;
+      }
+    }
     if(!privateRead?.ok){root.textContent=friendlyError(new Error(privateRead?.error||""),"open this preview");return;}
     url=privateRead.url;
   }
@@ -815,10 +825,14 @@ function finishOperation(message, error = false) {
     }
   }, 6000);
 }
+function isTransientBucketAccessError(error) {
+  const raw = error?.message || String(error || "");
+  return /unauthorized|\b401\b|\b403\b|worker.*(not ready|unreachable)|propagat|reachability|dns/i.test(raw);
+}
 function friendlyError(error, action = "complete that action") {
   const raw = error?.message || String(error);
-  if (/unauthorized|401|403/i.test(raw))
-    return "REDOWN could not access this bucket yet.";
+  if (isTransientBucketAccessError(error))
+    return "Preparing bucket… REDOWN is still verifying Cloudflare access.";
   if (/not found|404/i.test(raw)) return "The item is no longer available.";
   return `Could not ${action}.`;
 }
@@ -827,15 +841,18 @@ async function refreshProfiles() {
   renderWorkspaceProfiles();
 }
 async function ensurePrepared(target = workspaceTarget) {
-  const existing = r2Profiles().find(
-    (p) =>
-      p.accountId === target.accountId && p.bucketName === target.bucketName,
-  );
-  if (existing) return existing;
+  if (!target?.accountId || !target?.bucketName)
+    throw new Error("Choose a bucket first.");
+
   const id = `${target.accountId}:${target.bucketName}`;
   if (explorerPreparing.has(id)) return explorerPreparing.get(id);
+
   const task = (async () => {
-    setOperation("prepare", "Preparing this bucket for file operations…");
+    setOperation(
+      "prepare",
+      "Preparing bucket… Verifying Cloudflare access…",
+    );
+
     let lastError;
     for (let attempt = 0; attempt < 10; attempt++) {
       const result = await send({
@@ -844,23 +861,37 @@ async function ensurePrepared(target = workspaceTarget) {
         bucketName: target.bucketName,
         accountName: accountName(target.accountId),
       });
+
       if (result?.ok) {
         await refreshProfiles();
         finishOperation("Bucket ready");
         return result.profile;
       }
+
       lastError = new Error(
-        result?.error || "Bucket preparation is still propagating",
+        result?.error || "Cloudflare access is still propagating",
       );
+
+      // Temporary Worker/auth propagation is a readiness state, not a user-facing error.
       explorerOperation.message =
-        "Verifying Cloudflare access… Cloudflare may take a few minutes; REDOWN will keep checking.";
+        "Preparing bucket… Verifying Cloudflare access. This can take a few minutes.";
+      explorerOperation.state = "running";
       renderOperation();
+
+      // Clearly non-transient errors should still fail promptly.
+      if (!isTransientBucketAccessError(lastError)) break;
+
       if (attempt < 9)
         await new Promise((resolve) => setTimeout(resolve, 30000));
     }
-    finishOperation("REDOWN could not prepare this bucket yet.", true);
+
+    finishOperation(
+      "REDOWN could not finish preparing this bucket yet. Try again in a moment.",
+      true,
+    );
     throw lastError;
   })().finally(() => explorerPreparing.delete(id));
+
   explorerPreparing.set(id, task);
   return task;
 }
