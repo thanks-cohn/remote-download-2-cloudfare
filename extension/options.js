@@ -74,8 +74,8 @@ function renderTree(profile){
   const small=document.createElement("div");
   small.className="meta";
   small.textContent=(profile.menuTree?.length)
-    ?"Nested menu: each leaf sends to its own saved location."
-    :"Quick send: clicking this preset immediately uses its default location.";
+    ?"Nested menu: each leaf sends to its exact saved location."
+    :"Quick send: clicking this preset immediately uses the free-form default location above.";
   copy.append(strong,small);
 
   const controls=document.createElement("div");
@@ -334,20 +334,14 @@ function renderProfiles(){
     const grid=document.createElement("div"); grid.className="grid";
     grid.append(
       field("Menu label",p.menuLabel||p.name||"",v=>p.menuLabel=v),
-      selectField("Default path",[
-        ["3d","3D"],["2d","2D"],["videos","Videos"],["files","Files"]
-      ],p.defaultCategory||"files",v=>p.defaultCategory=v),
+      p.type==="cloudflare-r2"
+        ? defaultLocationField(p)
+        : field("Default path",p.defaultPath||"assets/files",v=>p.defaultPath=v),
       field("Order",String(p.menuOrder??index),v=>p.menuOrder=Number(v)||0,"number")
     );
 
     if(p.type==="cloudflare-r2"){
-      grid.append(
-        field("3D prefix",p.folders?.["3d"]||"3d",v=>(p.folders??={})["3d"]=v),
-        field("2D prefix",p.folders?.["2d"]||"2d",v=>(p.folders??={})["2d"]=v),
-        field("Video prefix",p.folders?.videos||"videos",v=>(p.folders??={}).videos=v),
-        field("Files prefix",p.folders?.files||"files",v=>(p.folders??={}).files=v),
-        assetCorsControl(p)
-      );
+      grid.append(assetCorsControl(p));
     }else{
       grid.append(
         field("Repository",p.repository||"",v=>p.repository=v,"text","owner/repository"),
@@ -380,9 +374,50 @@ function renderProfiles(){
   });
 
   renderWorkspaceProfiles();
-  for (const profile of visibleProfiles)
+  for (const profile of visibleProfiles) {
     ensureProfileMenuPrefixes(profile, leafMenuPrefixes(profile.menuTree)).catch(()=>{});
+    if (profile.type==="cloudflare-r2" && profile.defaultPrefix)
+      ensureProfileMenuPrefixes(profile,[profile.defaultPrefix]).catch(()=>{});
+  }
   scheduleSave();
+}
+
+function defaultLocationField(profile){
+  const wrap=document.createElement("div");
+  const label=document.createElement("label");
+  label.textContent="Default location";
+  const input=document.createElement("input");
+  input.type="text";
+  input.value=profile.defaultPrefix ?? profile.folders?.files ?? "files";
+  input.placeholder="e.g. Historical or Worlds/Ships/Finished";
+  const hint=document.createElement("div");
+  hint.className="meta";
+  hint.textContent="Quick send uses this exact R2 path. If it does not exist, REDOWN creates it.";
+
+  const saveAndCreate=async()=>{
+    const value=String(input.value||"").trim().replace(/^\/+|\/+$/g,"");
+    profile.defaultPrefix=value;
+    scheduleSave();
+    if(profile.type==="cloudflare-r2"&&value){
+      try{
+        await saveProfiles();
+        await ensureProfileMenuPrefixes(profile,[value]);
+        hint.textContent="Default location ready: /"+value;
+      }catch(error){
+        hint.textContent="Saved. REDOWN will create this location when access is ready.";
+      }
+    }else if(!value){
+      hint.textContent="Bucket root is now the default quick-send location.";
+    }
+  };
+  input.addEventListener("input",()=>{
+    profile.defaultPrefix=String(input.value||"").trim().replace(/^\/+|\/+$/g,"");
+    scheduleSave();
+  });
+  input.addEventListener("change",saveAndCreate);
+  input.addEventListener("blur",saveAndCreate);
+  wrap.append(label,input,hint);
+  return wrap;
 }
 
 function field(labelText,value,onInput,type="text",placeholder=""){
