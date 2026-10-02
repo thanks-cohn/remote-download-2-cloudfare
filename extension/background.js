@@ -1586,21 +1586,36 @@ async function ensureGitHubWorkflow(profile) {
   });
   if (!create.ok) throw new Error(`Could not install GitHub ingest workflow (${create.status})`);
 }
-async function ingestCloudflare(profile, sourceUrl, category, filename) {
-  const folder = profile.folders?.[category] || category;
-  const response = await fetch(profile.workerUrl, {
+async function ingestCloudflareAtPrefix(profile, sourceUrl, prefix, filename) {
+  const prepared = await preparedProfile(
+    profile.accountId,
+    profile.bucketName,
+    profile.accountName
+  );
+  const folder = cleanExplorerPrefix(prefix || "").replace(/\/$/, "");
+  const response = await fetch(prepared.workerUrl, {
     method: "POST",
     headers: {
-      authorization: `Bearer ${profile.token || ""}`,
+      authorization: `Bearer ${prepared.token || ""}`,
       "content-type": "application/json"
     },
-    body: JSON.stringify({ sourceUrl, folder, filename, publicBaseUrl: profile.publicBaseUrl || `${profile.workerUrl}/assets` })
+    body: JSON.stringify({
+      sourceUrl,
+      folder,
+      filename,
+      publicBaseUrl: prepared.publicBaseUrl || `${prepared.workerUrl}/assets`
+    })
   });
   const text = await response.text();
   let body;
-  try { body = JSON.parse(text); } catch { body = { ok: false, error: text }; }
-  if (!response.ok || !body.ok) throw new Error(body.error || `Cloudflare ingest failed (${response.status})`);
-  return body.publicUrl || publicAssetUrl(profile, body.key);
+  try { body = JSON.parse(text); } catch { body = { ok:false, error:text }; }
+  if (!response.ok || !body.ok)
+    throw new Error(body.error || `Cloudflare ingest failed (${response.status})`);
+  return body.publicUrl || publicAssetUrl(prepared, body.key);
+}
+async function ingestCloudflare(profile, sourceUrl, category, filename) {
+  const folder = profile.folders?.[category] || category;
+  return ingestCloudflareAtPrefix(profile, sourceUrl, folder, filename);
 }
 async function ingestGitHub(profile, sourceUrl, category, filename) {
   const repo = String(profile.repository || "").trim();
@@ -1748,27 +1763,49 @@ chrome.contextMenus.onClicked.addListener(async info => {
   if (!node || (Array.isArray(node.children) && node.children.length)) return;
 
   const category = node.category || profile.defaultCategory || "files";
-  const originalFolders = profile.folders;
-  const originalPaths = profile.paths;
 
   try {
-    if (profile.type === "cloudflare-r2" && node.prefix != null) {
-      profile.folders = { ...(profile.folders || {}), [category]: node.prefix };
-    }
-    if (profile.type === "github" && node.path != null) {
-      profile.paths = { ...(profile.paths || {}), [category]: node.path };
+    let location;
+    if (profile.type === "cloudflare-r2") {
+      const prefix = String(node.prefix ?? "").trim();
+      location = await ingestCloudflareAtPrefix(
+        profile,
+        sourceUrl,
+        prefix,
+        basenameFromUrl(sourceUrl)
+      );
+    } else if (profile.type === "github") {
+      const originalPaths = profile.paths;
+      try {
+        profile.paths = { ...(profile.paths || {}), [category]: node.path ?? "" };
+        location = await ingest(profile, sourceUrl, category);
+      } finally {
+        profile.paths = originalPaths;
+      }
+    } else {
+      location = await ingest(profile, sourceUrl, category);
     }
 
-    const location = await ingest(profile, sourceUrl, category);
-    await recordTransfer({ ok:true, sourceUrl, profileId:profile.id, profileName:profile.name, category, location });
+    await recordTransfer({
+      ok:true,
+      sourceUrl,
+      profileId:profile.id,
+      profileName:profile.name,
+      category,
+      location
+    });
     await notify("REDOWN complete", location);
   } catch (error) {
     const message = error?.message || String(error);
-    await recordTransfer({ ok:false, sourceUrl, profileId:profile.id, profileName:profile.name, category, error:message });
+    await recordTransfer({
+      ok:false,
+      sourceUrl,
+      profileId:profile.id,
+      profileName:profile.name,
+      category,
+      error:message
+    });
     await notify("REDOWN failed", message);
-  } finally {
-    profile.folders = originalFolders;
-    profile.paths = originalPaths;
   }
 });
 
@@ -1808,6 +1845,16 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       if (message?.type === "cfDeleteObjects") return sendResponse({ ok:true, ...(await deleteExplorerObjects(message)) });
       if (message?.type === "cfRenameEntry") return sendResponse({ ok:true, ...(await renameExplorerEntry(message)) });
       if (message?.type === "cfCreateFolder") return sendResponse({ ok:true, ...(await createExplorerFolder(message)) });
+      if (message?.type === "cfEnsurePrefixes") {
+        const profile=await preparedProfile(message.accountId,message.bucketName,message.accountName);
+        return sendResponse({
+          ok:true,
+          ...(await callBucketWorker(profile,{
+            action:"ensurePrefixes",
+            prefixes:Array.isArray(message.prefixes)?message.prefixes:[]
+          }))
+        });
+      }
       if (message?.type === "cfObjectProperties") {
         const profile=await preparedProfile(message.accountId,message.bucketName,message.accountName);
         return sendResponse({ ok:true, profile:{workerUrl:profile.workerUrl,publicBaseUrl:profile.publicBaseUrl}, ...(await callBucketWorker(profile,{action:"headObject",key:message.key})) });
