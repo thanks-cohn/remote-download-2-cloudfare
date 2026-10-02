@@ -12,5 +12,8 @@
   },
   "devDependencies": {
     "wrangler": "^4.0.0"
+  },
+  "dependencies": {
+    "@google/model-viewer": "^4.1.0"
   }
 }
