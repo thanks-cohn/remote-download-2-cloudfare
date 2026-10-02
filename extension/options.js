@@ -6,6 +6,7 @@ let workspaceTarget=null;
 let workspaceObjects=[];
 let workspacePreviewExpanded=false;
 let workspacePreviewLightbox=false;
+let workspacePreviewRequestId=0;
 
 function uid(){return crypto.randomUUID();}
 function setStatus(id,msg,kind=""){const el=$(id);el.textContent=msg||"";el.className="status"+(kind?" "+kind:"");}
@@ -602,6 +603,7 @@ function appendDetails(root,obj,key,url,type){
   root.append(link);
 }
 async function showWorkspacePreview(obj,row,urlOverride=""){
+  const requestId=++workspacePreviewRequestId;
   const root=$("workspace-preview");
   root.replaceChildren();
   document.querySelectorAll("#workspace-objects .object.active").forEach(el=>el.classList.remove("active"));
@@ -610,17 +612,21 @@ async function showWorkspacePreview(obj,row,urlOverride=""){
   let previewProfile=r2Profiles().find(p=>p.accountId===workspaceTarget?.accountId&&p.bucketName===workspaceTarget?.bucketName);
   if(!previewProfile){
     const preparing=document.createElement("div");preparing.className="meta";preparing.innerHTML='<span class="operation-spinner"></span>Preparing preview…';root.append(preparing);
-    try{previewProfile=await ensurePrepared(workspaceTarget);}catch(error){preparing.textContent=friendlyError(error,"prepare the preview");return;}
+    try{previewProfile=await ensurePrepared(workspaceTarget);}catch(error){if(requestId!==workspacePreviewRequestId)return;preparing.textContent=friendlyError(error,"prepare the preview");return;}
+    if(requestId!==workspacePreviewRequestId)return;
     root.replaceChildren();
   }
   let url=urlOverride;
   if(!url){
     let privateRead=await send({type:"cfPrivateObjectUrl",...explorerSource(),key,ttl:900});
+    if(requestId!==workspacePreviewRequestId)return;
     if(!privateRead?.ok && isTransientBucketAccessError(new Error(privateRead?.error||""))){
       root.innerHTML='<div class="meta"><span class="operation-spinner"></span>Preparing bucket… Verifying Cloudflare access…</div>';
       try{
         await ensurePrepared(workspaceTarget);
+        if(requestId!==workspacePreviewRequestId)return;
         privateRead=await send({type:"cfPrivateObjectUrl",...explorerSource(),key,ttl:900});
+        if(requestId!==workspacePreviewRequestId)return;
       }catch(error){
         root.textContent=friendlyError(error,"open this preview");
         return;
@@ -629,6 +635,7 @@ async function showWorkspacePreview(obj,row,urlOverride=""){
     if(!privateRead?.ok){root.textContent=friendlyError(new Error(privateRead?.error||""),"open this preview");return;}
     url=privateRead.url;
   }
+  if(requestId!==workspacePreviewRequestId)return;
   const type=objectContentType(obj,key);
   const head=document.createElement("div");head.className="preview-head";
   const title=document.createElement("div");title.className="preview-title";title.textContent=key;
@@ -671,8 +678,10 @@ async function showWorkspacePreview(obj,row,urlOverride=""){
     root.append(pre);
     try{
       const response=await fetch(url,{headers:{range:"bytes=0-524287"}});
+      if(requestId!==workspacePreviewRequestId)return;
       if(!response.ok&&!([200,206].includes(response.status)))throw new Error(`HTTP ${response.status}`);
       const text=await response.text();
+      if(requestId!==workspacePreviewRequestId)return;
       pre.textContent=text+(text.length>=524288?"\n\n[Preview truncated at 512 KB]":"");
     }catch(error){
       pre.textContent=`Could not load text preview: ${error?.message||String(error)}`;
