@@ -534,28 +534,40 @@ Do not present this temporary propagation state as a failure.
 
 When a newly connected or newly prepared bucket is not yet reachable:
 
-- enter a visible **Preparing / Connecting / Finishing setup** state
+- enter a visible **Verifying Cloudflare access…** state
 - keep the user on the current screen
 - disable only actions that truly cannot run yet
-- show an indeterminate progress indicator or calm progress status
-- retry automatically with backoff
+- show a small indeterminate loading indicator beside the verification message
+- retry automatically about every **30 seconds**
+- do not spam requests continuously while Cloudflare/Worker authorization or routing is still propagating
 - distinguish temporary 401/403/route/DNS/Worker-readiness responses from a confirmed invalid-auth state
-- keep retrying for the existing provisioning window or a reasonable bounded period
-- if the operation eventually succeeds, transition directly into the bucket Explorer without requiring another click
-- only show a hard failure after the retry/provisioning window is exhausted or when the API returns a clearly terminal authorization error
+- continue verification for several minutes when the bucket was just connected or prepared
+- if a check succeeds, immediately mark the bucket ready, remove the loading indicator/message, and open/refresh the Explorer automatically
+- do not require the user to click the bucket again
+- only show a hard failure after the bounded verification window is exhausted or when the API returns a clearly terminal authorization error
 
-Suggested user-facing copy:
-
-```text
-Preparing this bucket…
-Cloudflare is finishing setup. This can take a few minutes.
-```
-
-Optional secondary copy:
+Preferred user-facing copy:
 
 ```text
-You can leave this open. REDOWN will continue checking automatically.
+Verifying Cloudflare access…
 ```
+
+Secondary copy can explain the delay without making it sound like an error:
+
+```text
+Cloudflare may take a few minutes to finish making this bucket available.
+REDOWN will check again automatically.
+```
+
+The UI may optionally show a subtle next-check hint such as:
+
+```text
+Checking again in 30 seconds…
+```
+
+but avoid countdown noise if it makes the interface feel busy.
+
+Once authorization/readiness is confirmed, the verification state should disappear entirely and the normal Explorer should take its place.
 
 Do not show raw messages such as:
 
