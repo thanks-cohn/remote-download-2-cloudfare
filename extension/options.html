@@ -111,7 +111,7 @@
     .preview-media video{width:100%}
     .preview-media audio{width:100%}
     .preview-media iframe{width:100%;height:500px;border:0;background:white}
-    .preview-title{font-weight:850;word-break:break-all}
+    .upload-location-picker{display:grid;grid-template-columns:1fr;gap:7px}.upload-location-picker select{min-width:0}.upload-location-picker .meta{margin-top:0}.upload-destination-grid{align-items:start}.default-location-builder{display:grid;gap:8px}.location-levels{display:grid;gap:7px}.location-level-row{display:grid;grid-template-columns:minmax(150px,.9fr) minmax(170px,1.1fr) auto auto;gap:7px;align-items:center}.location-level-row select,.location-level-row input{min-width:0}.location-level-remove{min-width:34px}@media(max-width:800px){.location-level-row{grid-template-columns:1fr 1fr}.location-level-row .mini{width:100%}}.preview-title{font-weight:850;word-break:break-all}.preview-nav{display:flex;align-items:center;gap:6px;flex-wrap:wrap}.preview-arrow{min-width:38px;font-size:18px;line-height:1}.preview-lightbox-backdrop{position:fixed;inset:0;z-index:70;background:rgba(3,2,5,.82);backdrop-filter:blur(5px)}body.preview-lightbox-open{overflow:hidden}#workspace-preview.lightbox{position:fixed;z-index:80;inset:5vh 5vw;width:auto;max-width:none;max-height:90vh;min-height:0;border:1px solid #4a3762;border-radius:16px;padding:16px;background:#0a0710;box-shadow:0 30px 110px rgba(0,0,0,.78);overflow:auto}#workspace-preview.lightbox .preview-media{min-height:56vh}#workspace-preview.lightbox .preview-media img,#workspace-preview.lightbox .preview-media video{max-width:92vw;max-height:72vh}#workspace-preview.lightbox .preview-media iframe{height:72vh}#workspace-preview.lightbox .text-preview{max-height:72vh}
     .preview-details{display:grid;grid-template-columns:105px 1fr;gap:7px 10px;font-size:12px}
     .preview-details div:nth-child(odd){color:var(--muted)}
     .preview-details div:nth-child(even){word-break:break-all}
@@ -187,9 +187,16 @@
       <div><h2>Upload from computer</h2><div class="section-note">Choose an R2 bucket and location, then drag files in.</div></div>
     </div>
     <div class="card">
-      <div class="grid two">
+      <div class="grid two upload-destination-grid">
         <div><label for="local-profile">Bucket</label><select id="local-profile"></select></div>
-        <div><label for="local-prefix">Location / prefix</label><input id="local-prefix" value="files" placeholder="2d, 3d, videos, files, or any/custom/path"></div>
+        <div class="upload-location-picker">
+          <label for="local-location-search">Location</label>
+          <input id="local-location-search" type="search" placeholder="Search folders, e.g. alm">
+          <select id="local-prefix" aria-label="Upload location">
+            <option value="">/ (bucket root)</option>
+          </select>
+          <div id="local-location-hint" class="meta">Choose a bucket to load its remote folders.</div>
+        </div>
       </div>
       <input id="local-files" type="file" multiple hidden>
       <div id="local-dropzone" class="dropzone" tabindex="0">
@@ -226,7 +233,7 @@
           <div id="explorer-status" class="explorer-status" aria-live="polite"></div>
         </main>
         <aside id="workspace-preview" class="preview explorer-preview">
-          <div class="preview-head"><div class="meta">Select a file to preview it or inspect its details.</div><button id="preview-expand" class="ghost" type="button">Expand</button></div>
+          <div class="preview-head"><div class="meta">Select a file to preview it or inspect its details.</div><div class="preview-nav"><button id="preview-lightbox" class="ghost" type="button">Lightbox</button><button id="preview-expand" class="ghost" type="button">Expand</button></div></div>
         </aside>
       </div>
       <div class="explorer-footer"><span id="explorer-count">No location selected</span><span id="explorer-operation" aria-live="polite"></span><span id="explorer-selection"></span></div>
