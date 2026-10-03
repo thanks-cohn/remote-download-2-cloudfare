@@ -6,8 +6,6 @@ let workspaceTarget=null;
 let workspaceObjects=[];
 let workspacePreviewExpanded=false;
 let workspacePreviewLightbox=false;
-let workspacePreviewHome=null;
-let workspacePreviewNextSibling=null;
 let workspacePreviewRequestId=0;
 const defaultLocationPrefixCache=new Map();
 let uploadLocationPrefixes=[];
@@ -1096,7 +1094,7 @@ async function showWorkspacePreview(obj,row,urlOverride=""){
   const controls=document.createElement("div");controls.className="preview-nav";
   const previous=document.createElement("button");previous.className="ghost preview-arrow";previous.type="button";previous.setAttribute("aria-label","Previous file");previous.title="Previous file";previous.textContent="←";previous.addEventListener("click",()=>navigatePreview(-1));
   const next=document.createElement("button");next.className="ghost preview-arrow";next.type="button";next.setAttribute("aria-label","Next file");next.title="Next file";next.textContent="→";next.addEventListener("click",()=>navigatePreview(1));
-  const lightbox=document.createElement("button");lightbox.className="ghost";lightbox.type="button";lightbox.textContent=workspacePreviewLightbox?"Close lightbox":"Lightbox";lightbox.addEventListener("click",()=>setWorkspacePreviewLightbox(!workspacePreviewLightbox));
+  const lightbox=document.createElement("button");lightbox.className="ghost";lightbox.type="button";lightbox.textContent=workspaceLightboxOpen()?"Close lightbox":"Lightbox";lightbox.addEventListener("click",()=>setWorkspacePreviewLightbox(!workspaceLightboxOpen()));
   const expand=document.createElement("button");expand.className="ghost";expand.type="button";expand.textContent=workspacePreviewExpanded?"Collapse":"Expand";expand.addEventListener("click",()=>setWorkspacePreviewExpanded(!workspacePreviewExpanded));
   controls.append(previous,next,lightbox,expand);
   head.append(title,controls);root.append(head);
@@ -1160,9 +1158,22 @@ async function showWorkspacePreview(obj,row,urlOverride=""){
   appendDetails(root,obj,key,url,type);
 }
 
+function workspaceLightboxLayer(){
+  return document.querySelector(".preview-lightbox-layer");
+}
+function workspaceLightboxOpen(){
+  return Boolean(workspaceLightboxLayer());
+}
+function syncWorkspaceLightboxButtons(){
+  const open=workspaceLightboxOpen();
+  workspacePreviewLightbox=open;
+  document.querySelectorAll("#workspace-preview .preview-head button").forEach((button)=>{
+    if(/lightbox/i.test(button.textContent))button.textContent=open?"Close lightbox":"Lightbox";
+  });
+}
 function setWorkspacePreviewExpanded(expanded){
   workspacePreviewExpanded=Boolean(expanded);
-  if (workspacePreviewExpanded && workspacePreviewLightbox)
+  if (workspacePreviewExpanded && workspaceLightboxOpen())
     setWorkspacePreviewLightbox(false);
   const grid=document.querySelector(".explorer-body");
   grid?.classList.toggle("expanded",workspacePreviewExpanded);
@@ -1171,61 +1182,83 @@ function setWorkspacePreviewExpanded(expanded){
   if(button)button.textContent=workspacePreviewExpanded?"Collapse":"Expand";
 }
 function setWorkspacePreviewLightbox(enabled){
-  workspacePreviewLightbox=Boolean(enabled);
-  if (workspacePreviewLightbox && workspacePreviewExpanded) {
-    workspacePreviewExpanded=false;
-    document.querySelector(".explorer-body")?.classList.remove("expanded");
+  const existing=workspaceLightboxLayer();
+  const shouldOpen=Boolean(enabled);
+
+  if(!shouldOpen){
+    existing?.remove();
+    document.body.classList.remove("preview-lightbox-open");
+    workspacePreviewLightbox=false;
+    syncWorkspaceLightboxButtons();
+    $("explorer")?.focus?.({preventScroll:true});
+    return;
+  }
+
+  if(existing){
+    workspacePreviewLightbox=true;
+    syncWorkspaceLightboxButtons();
+    return;
   }
 
   const preview=$("#workspace-preview");
   if(!preview)return;
 
-  let backdrop=document.querySelector(".preview-lightbox-backdrop");
-
-  if (workspacePreviewLightbox) {
-    if(!workspacePreviewHome){
-      workspacePreviewHome=preview.parentNode;
-      workspacePreviewNextSibling=preview.nextSibling;
-    }
-
-    if (!backdrop) {
-      backdrop=document.createElement("div");
-      backdrop.className="preview-lightbox-backdrop";
-      backdrop.setAttribute("aria-hidden","true");
-      backdrop.addEventListener("click",()=>setWorkspacePreviewLightbox(false));
-      document.body.append(backdrop);
-    }
-
-    // A true lightbox must live outside the Explorer grid so responsive,
-    // overflow and sidebar layout rules cannot hide or clip its media.
-    if(preview.parentNode!==document.body)document.body.append(preview);
-    preview.classList.add("lightbox");
-    preview.removeAttribute("hidden");
-    preview.style.display="flex";
-    document.body.classList.add("preview-lightbox-open");
-    preview.querySelector(".preview-media img, .preview-media video, .preview-media iframe, model-viewer")?.scrollIntoView?.({block:"center"});
-  } else {
-    preview.classList.remove("lightbox");
-    preview.style.removeProperty("display");
-    document.body.classList.remove("preview-lightbox-open");
-    backdrop?.remove();
-
-    if(workspacePreviewHome){
-      if(workspacePreviewNextSibling&&workspacePreviewNextSibling.parentNode===workspacePreviewHome)
-        workspacePreviewHome.insertBefore(preview,workspacePreviewNextSibling);
-      else
-        workspacePreviewHome.append(preview);
-    }
-    workspacePreviewHome=null;
-    workspacePreviewNextSibling=null;
-    $("explorer")?.focus?.({preventScroll:true});
+  const source=preview.querySelector(".preview-media, .text-preview");
+  if(!source){
+    finishOperation("Open a file preview first.",true);
+    workspacePreviewLightbox=false;
+    syncWorkspaceLightboxButtons();
+    return;
   }
 
-  const button=Array.from(preview.querySelectorAll(".preview-head button"))
-    .find((el)=>/lightbox/i.test(el.textContent));
-  if(button)button.textContent=workspacePreviewLightbox?"Close lightbox":"Lightbox";
-  const expand=preview.querySelector(".preview-head button:last-child");
-  if(expand)expand.textContent=workspacePreviewExpanded?"Collapse":"Expand";
+  if(workspacePreviewExpanded){
+    workspacePreviewExpanded=false;
+    document.querySelector(".explorer-body")?.classList.remove("expanded");
+  }
+
+  const layer=document.createElement("div");
+  layer.className="preview-lightbox-layer";
+  layer.setAttribute("role","dialog");
+  layer.setAttribute("aria-modal","true");
+  layer.setAttribute("aria-label","File lightbox");
+
+  const backdrop=document.createElement("button");
+  backdrop.type="button";
+  backdrop.className="preview-lightbox-backdrop";
+  backdrop.setAttribute("aria-label","Close lightbox");
+  backdrop.addEventListener("click",()=>setWorkspacePreviewLightbox(false));
+
+  const panel=document.createElement("div");
+  panel.className="preview-lightbox-panel";
+
+  const head=document.createElement("div");
+  head.className="preview-lightbox-head";
+
+  const title=document.createElement("div");
+  title.className="preview-title";
+  title.textContent=preview.querySelector(".preview-title")?.textContent||"Preview";
+
+  const close=document.createElement("button");
+  close.type="button";
+  close.className="ghost preview-lightbox-close";
+  close.textContent="Close";
+  close.addEventListener("click",()=>setWorkspacePreviewLightbox(false));
+
+  const stage=document.createElement("div");
+  stage.className="preview-lightbox-stage";
+  const clone=source.cloneNode(true);
+  clone.classList.add("lightbox-copy");
+  stage.append(clone);
+
+  head.append(title,close);
+  panel.append(head,stage);
+  layer.append(backdrop,panel);
+  document.body.append(layer);
+  document.body.classList.add("preview-lightbox-open");
+
+  workspacePreviewLightbox=true;
+  syncWorkspaceLightboxButtons();
+  close.focus({preventScroll:true});
 }
 
 
@@ -2170,7 +2203,7 @@ async function previewExplorerItem(item) {
     const head=document.createElement("div");head.className="preview-head";
     const title=document.createElement("div");title.className="preview-title";title.textContent=item.name;
     const controls=document.createElement("div");controls.className="preview-nav";
-    const lightbox=document.createElement("button");lightbox.className="ghost";lightbox.type="button";lightbox.textContent=workspacePreviewLightbox?"Close lightbox":"Lightbox";lightbox.addEventListener("click",()=>setWorkspacePreviewLightbox(!workspacePreviewLightbox));
+    const lightbox=document.createElement("button");lightbox.className="ghost";lightbox.type="button";lightbox.textContent=workspaceLightboxOpen()?"Close lightbox":"Lightbox";lightbox.addEventListener("click",()=>setWorkspacePreviewLightbox(!workspaceLightboxOpen()));
     const expand=document.createElement("button");expand.className="ghost";expand.type="button";expand.textContent=workspacePreviewExpanded?"Collapse":"Expand";expand.addEventListener("click",()=>setWorkspacePreviewExpanded(!workspacePreviewExpanded));
     controls.append(lightbox,expand);head.append(title,controls);
     const note=document.createElement("div");note.className="preview-folder";note.innerHTML=iconSvg("folder")+"<strong>Folder</strong><span>Press Enter to open this folder.</span>";
@@ -2906,7 +2939,7 @@ function wireWorkspace() {
     setWorkspacePreviewExpanded(!workspacePreviewExpanded),
   );
   $("preview-lightbox")?.addEventListener("click", () =>
-    setWorkspacePreviewLightbox(!workspacePreviewLightbox),
+    setWorkspacePreviewLightbox(!workspaceLightboxOpen()),
   );
   $("explorer-new-folder").onclick = () => workspaceTarget && beginNewFolder();
   $("explorer-upload").onclick = async () => {
@@ -2996,7 +3029,7 @@ function wireWorkspace() {
       navigatePreview(-1);
     } else if (e.key === "Escape") {
       hideExplorerMenu();
-      if (workspacePreviewLightbox) {
+      if (workspaceLightboxOpen()) {
         e.preventDefault();
         setWorkspacePreviewLightbox(false);
       } else if (workspacePreviewExpanded) {
