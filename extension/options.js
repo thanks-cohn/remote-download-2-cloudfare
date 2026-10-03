@@ -150,27 +150,62 @@ function renderTreeNode(profile,node,depth){
   const labelInput=document.createElement("input");
   labelInput.className="tree-label";
   labelInput.value=node.label||"";
-  labelInput.placeholder="Menu label";
+  labelInput.placeholder="Menu item";
+  labelInput.title="The label shown in REDOWN's right-click menu";
   labelInput.addEventListener("input",()=>{node.label=labelInput.value;scheduleSave();});
 
-  const kind=document.createElement("select");
-  [["files","Files"],["videos","Videos"],["3d","3D"],["2d","2D"]].forEach(([v,t])=>{
-    const o=document.createElement("option");o.value=v;o.textContent=t;o.selected=(node.category||"files")===v;kind.append(o);
-  });
-  kind.title="Target category";
-  kind.addEventListener("change",()=>{node.category=kind.value;scheduleSave();});
+  const targetWrap=document.createElement("div");
+  targetWrap.className="tree-target-wrap";
+
+  const suggestions=document.createElement("select");
+  suggestions.className="tree-location-suggest";
+  suggestions.title="Suggested or existing destination";
+  const choose=document.createElement("option");
+  choose.value="";
+  choose.textContent="Suggested location…";
+  suggestions.append(choose);
+
+  const known=new Set([
+    ...Object.values(profile.folders||{}),
+    ...(profile.menuTree||[]).flatMap(function collect(entry){
+      return [
+        entry.prefix,
+        ...(entry.children||[]).flatMap(collect)
+      ];
+    })
+  ].map((value)=>String(value||"").trim().replace(/^\/+|\/+$/g,"")).filter(Boolean));
+
+  for(const value of known){
+    const option=document.createElement("option");
+    option.value=value;
+    option.textContent="/"+value;
+    suggestions.append(option);
+  }
 
   const target=document.createElement("input");
   target.className="tree-target";
   target.value=profile.type==="cloudflare-r2"?(node.prefix??""):(node.path??"");
-  target.placeholder=profile.type==="cloudflare-r2"?"R2 prefix, e.g. 3d/heroes":"GitHub path, e.g. assets/3d/heroes";
+  target.placeholder=profile.type==="cloudflare-r2"?"Location, e.g. Historical/Letters":"Path, e.g. assets/history/letters";
   target.disabled=node.children.length>0;
-  target.title=node.children.length?"Parent menu items do not download; their leaf children do.":"Download destination";
+  target.title=node.children.length
+    ?"This is a parent menu item. Its child entries choose the final destination."
+    :"Exact destination. Type any path or choose a suggestion.";
+
+  suggestions.addEventListener("change",()=>{
+    if(!suggestions.value)return;
+    target.value=suggestions.value;
+    if(profile.type==="cloudflare-r2")node.prefix=suggestions.value;
+    else node.path=suggestions.value;
+    scheduleSave();
+    materializeTarget();
+  });
+
   target.addEventListener("input",()=>{
     if(profile.type==="cloudflare-r2")node.prefix=target.value;
     else node.path=target.value;
     scheduleSave();
   });
+
   const materializeTarget=async()=>{
     if(profile.type!=="cloudflare-r2"||node.children.length)return;
     try{
@@ -182,11 +217,13 @@ function renderTreeNode(profile,node,depth){
   };
   target.addEventListener("change",materializeTarget);
   target.addEventListener("blur",materializeTarget);
+  targetWrap.append(suggestions,target);
 
   const add=document.createElement("button");
-  add.className="mini";
-  add.textContent="+ Child";
-  add.title="Add another pop-out level";
+  add.className="mini tree-add";
+  add.textContent="+";
+  add.title="Add a child destination under this menu item";
+  add.setAttribute("aria-label","Add child destination");
   add.addEventListener("click",()=>{
     node.children.push(makeNode("New destination"));
     scheduleSave();
@@ -194,16 +231,16 @@ function renderTreeNode(profile,node,depth){
   });
 
   const remove=document.createElement("button");
-  remove.className="mini danger";
+  remove.className="mini danger tree-remove";
   remove.textContent="×";
-  remove.title="Remove this menu item";
+  remove.title="Remove this menu entry only. This never deletes the R2 folder.";
   remove.addEventListener("click",()=>{
     removeNode(profile.menuTree,node.id);
     scheduleSave();
     renderProfiles();
   });
 
-  row.append(branch,labelInput,kind,target,add,remove);
+  row.append(branch,labelInput,targetWrap,add,remove);
   item.append(row);
 
   if(node.children.length){
