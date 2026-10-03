@@ -89,6 +89,10 @@ async function refreshPresetLocations(profile,{rerender=true}={}){
     ...leafMenuPrefixes(profile.menuTree||[])
   ].map((value)=>String(value||"").trim().replace(/^\/+|\/+$/g,"")).filter(Boolean));
 
+  // Show everything REDOWN already knows immediately. The Cloudflare lookup below
+  // only enriches this cache; it never blocks the preset editor.
+  presetLocationCache.set(key,known);
+
   try{
     const root=await send({
       type:"cfFolderChildren",
@@ -109,6 +113,8 @@ async function refreshPresetLocations(profile,{rerender=true}={}){
 
 
 function renderTree(profile){
+  if(profile?.type==="cloudflare-r2")return renderR2LocationMenu(profile);
+
   const wrap=document.createElement("div");
   wrap.className="tree-editor";
 
@@ -192,6 +198,312 @@ function renderTree(profile){
   wrap.append(addRoot);
   return wrap;
 }
+
+function presetKnownLocations(profile){
+  const key=presetCacheKey(profile);
+  const known=new Set([
+    ...(presetLocationCache.get(key)||[]),
+    ...Object.values(profile.folders||{}),
+    ...leafMenuPrefixes(profile.menuTree||[])
+  ].map((value)=>String(value||"").trim().replace(/^\/+|\/+$/g,"")).filter(Boolean));
+  presetLocationCache.set(key,known);
+  return known;
+}
+function presetImmediateChildren(profile,parentPrefix=""){
+  const parent=String(parentPrefix||"").replace(/^\/+|\/+$/g,"");
+  const parentParts=parent.split("/").filter(Boolean);
+  const seen=new Set();
+  for(const raw of presetKnownLocations(profile)){
+    const parts=String(raw||"").split("/").filter(Boolean);
+    let matches=true;
+    for(let i=0;i<parentParts.length;i++){
+      if(parts[i]!==parentParts[i]){matches=false;break;}
+    }
+    if(!matches)continue;
+    const child=parts[parentParts.length];
+    if(child)seen.add(child);
+  }
+  return Array.from(seen).sort((a,b)=>a.localeCompare(b,undefined,{numeric:true,sensitivity:"base"}));
+}
+async function hydratePresetChildren(profile,parentPrefix,select){
+  try{
+    const cleanParent=String(parentPrefix||"").replace(/^\/+|\/+$/g,"");
+    const result=await send({
+      type:"cfFolderChildren",
+      accountId:profile.accountId,
+      bucketName:profile.bucketName,
+      parentPrefix:cleanParent,
+      limit:250
+    });
+    if(!result?.ok)return;
+    const known=presetKnownLocations(profile);
+    const existing=new Set(Array.from(select.options).map((option)=>option.value));
+    for(const child of result.children||[]){
+      const clean=String(child||"").trim().replace(/^\/+|\/+$/g,"");
+      if(!clean)continue;
+      const full=cleanParent?cleanParent+"/"+clean:clean;
+      known.add(full);
+      if(!existing.has(clean)){
+        const option=document.createElement("option");
+        option.value=clean;
+        option.textContent=clean;
+        select.append(option);
+        existing.add(clean);
+      }
+    }
+    presetLocationCache.set(presetCacheKey(profile),known);
+  }catch{}
+}
+function renderR2LocationMenu(profile){
+  profile.menuTree??=[];
+  const wrap=document.createElement("div");
+  wrap.className="tree-editor r2-location-menu";
+
+  const heading=document.createElement("div");
+  heading.className="tree-heading";
+  const copy=document.createElement("div");
+  const strong=document.createElement("strong");
+  strong.textContent="Right-click behavior";
+  const small=document.createElement("div");
+  small.className="meta";
+  small.textContent=profile.menuTree.length
+    ?"Nested menu follows real R2 locations. Existing folders appear immediately; deeper folders refresh quietly in the background."
+    :"Quick send uses the destination selected above.";
+  copy.append(strong,small);
+
+  const controls=document.createElement("div");
+  controls.className="row-actions";
+  const refresh=document.createElement("button");
+  refresh.className="ghost";
+  refresh.type="button";
+  refresh.textContent="Refresh locations";
+  refresh.addEventListener("click",async()=>{
+    refresh.disabled=true;
+    refresh.textContent="Refreshing…";
+    try{
+      await refreshPresetLocations(profile,{rerender:false});
+      renderProfiles();
+    }finally{
+      refresh.disabled=false;
+      refresh.textContent="Refresh locations";
+    }
+  });
+
+  const quick=document.createElement("button");
+  quick.className=profile.menuTree.length?"ghost":"secondary";
+  quick.type="button";
+  quick.textContent="Quick send";
+  quick.addEventListener("click",()=>{
+    profile.menuTree=[];
+    scheduleSave();
+    renderProfiles();
+  });
+
+  const nested=document.createElement("button");
+  nested.className=profile.menuTree.length?"secondary":"ghost";
+  nested.type="button";
+  nested.textContent="Nested menu";
+  nested.addEventListener("click",()=>{
+    if(!profile.menuTree.length){
+      const roots=presetImmediateChildren(profile,"");
+      profile.menuTree=roots.slice(0,4).map((name)=>({
+        id:uid(),label:name,prefix:name,category:"files",children:[]
+      }));
+      if(!profile.menuTree.length){
+        const fallback=String(profile.defaultPrefix||"files").split("/").filter(Boolean)[0]||"files";
+        profile.menuTree=[{id:uid(),label:fallback,prefix:fallback,category:"files",children:[]}];
+      }
+    }
+    scheduleSave();
+    renderProfiles();
+  });
+
+  controls.append(refresh,quick,nested);
+  heading.append(copy,controls);
+  wrap.append(heading);
+  if(!profile.menuTree.length)return wrap;
+
+  const note=document.createElement("div");
+  note.className="tree-note r2-location-note";
+  note.textContent="Choose real folders from the dropdowns. The blank fields are only for creating something new.";
+  wrap.append(note);
+
+  const list=document.createElement("div");
+  list.className="r2-location-list";
+
+  const nodeParentPrefix=(node,parents)=>{
+    if(!parents.length)return "";
+    return String(parents[parents.length-1]?.prefix||"").replace(/^\/+|\/+$/g,"");
+  };
+
+  const renderNode=(node,depth,parents=[])=>{
+    node.children??=[];
+    const parentPrefix=nodeParentPrefix(node,parents);
+    const currentPrefix=String(node.prefix||"").replace(/^\/+|\/+$/g,"");
+    const currentLeaf=currentPrefix.split("/").filter(Boolean).pop()||"";
+
+    const shell=document.createElement("div");
+    shell.className="r2-location-node";
+    shell.style.setProperty("--depth",String(depth));
+
+    const row=document.createElement("div");
+    row.className="r2-location-row";
+
+    const branch=document.createElement("div");
+    branch.className="r2-location-branch";
+    branch.textContent=node.children.length?"▾":"•";
+
+    const select=document.createElement("select");
+    select.className="r2-location-select";
+    const placeholder=document.createElement("option");
+    placeholder.value="";
+    placeholder.textContent=depth===0?"Choose existing location…":"Choose existing child…";
+    select.append(placeholder);
+
+    const children=presetImmediateChildren(profile,parentPrefix);
+    if(currentLeaf&&!children.includes(currentLeaf))children.push(currentLeaf);
+    children.sort((a,b)=>a.localeCompare(b,undefined,{numeric:true,sensitivity:"base"}));
+    for(const child of children){
+      const option=document.createElement("option");
+      option.value=child;
+      option.textContent=child;
+      option.selected=child===currentLeaf;
+      select.append(option);
+    }
+
+    const create=document.createElement("input");
+    create.type="text";
+    create.className="r2-location-create";
+    create.value="";
+    create.placeholder=depth===0
+      ?"Create new location…"
+      :"Create new child…";
+    create.setAttribute("aria-label",create.placeholder);
+
+    const add=document.createElement("button");
+    add.type="button";
+    add.className="mini tree-add";
+    add.textContent="+";
+    add.title="Add a child under this location";
+
+    const remove=document.createElement("button");
+    remove.type="button";
+    remove.className="mini danger tree-remove";
+    remove.textContent="×";
+    remove.title="Remove this destination from the right-click preset only";
+
+    const applyLocation=async(leaf,{materialize=false}={})=>{
+      const clean=String(leaf||"").replace(/[\\/\0]/g,"").trim();
+      if(!clean)return false;
+      const full=parentPrefix?parentPrefix+"/"+clean:clean;
+      node.prefix=full;
+      node.label=clean;
+      node.category=node.category||"files";
+      scheduleSave();
+
+      const known=presetKnownLocations(profile);
+      known.add(full);
+      presetLocationCache.set(presetCacheKey(profile),known);
+
+      if(materialize){
+        try{
+          await saveProfiles();
+          await ensureProfileMenuPrefixes(profile,[full]);
+        }catch{}
+      }
+      return true;
+    };
+
+    select.addEventListener("change",async()=>{
+      if(!select.value)return;
+      await applyLocation(select.value,{materialize:false});
+      renderProfiles();
+    });
+
+    const createLocation=async()=>{
+      const clean=create.value.replace(/[\\/\0]/g,"").trim();
+      if(!clean)return false;
+      await applyLocation(clean,{materialize:true});
+      create.value="";
+      renderProfiles();
+      return true;
+    };
+    create.addEventListener("keydown",(event)=>{
+      if(event.key==="Enter"){event.preventDefault();createLocation();}
+    });
+
+    add.addEventListener("click",async()=>{
+      if(!node.prefix){
+        const made=await createLocation();
+        if(!made)return;
+      }
+      node.children.push({id:uid(),label:"",prefix:"",category:"files",children:[]});
+      scheduleSave();
+      renderProfiles();
+    });
+
+    remove.addEventListener("click",()=>{
+      removeNode(profile.menuTree,node.id);
+      scheduleSave();
+      renderProfiles();
+    });
+
+    row.append(branch,select,create,add,remove);
+    shell.append(row);
+
+    hydratePresetChildren(profile,parentPrefix,select);
+
+    if(node.children.length){
+      const kids=document.createElement("div");
+      kids.className="r2-location-children";
+      for(const child of node.children)kids.append(renderNode(child,depth+1,[...parents,node]));
+      shell.append(kids);
+    }
+    return shell;
+  };
+
+  for(const node of profile.menuTree)list.append(renderNode(node,0,[]));
+  wrap.append(list);
+
+  const addTop=document.createElement("div");
+  addTop.className="r2-add-top";
+  const label=document.createElement("div");
+  label.className="r2-add-top-label";
+  label.textContent="New top-level location";
+  const topInput=document.createElement("input");
+  topInput.type="text";
+  topInput.placeholder="Create a new top-level location…";
+  const topButton=document.createElement("button");
+  topButton.type="button";
+  topButton.className="secondary";
+  topButton.textContent="Add";
+  const addTopLocation=async()=>{
+    const clean=topInput.value.replace(/[\\/\0]/g,"").trim();
+    if(!clean)return;
+    profile.menuTree.push({id:uid(),label:clean,prefix:clean,category:"files",children:[]});
+    const known=presetKnownLocations(profile);
+    known.add(clean);
+    presetLocationCache.set(presetCacheKey(profile),known);
+    try{
+      await saveProfiles();
+      await ensureProfileMenuPrefixes(profile,[clean]);
+    }catch{}
+    topInput.value="";
+    scheduleSave();
+    renderProfiles();
+  };
+  topButton.addEventListener("click",addTopLocation);
+  topInput.addEventListener("keydown",(event)=>{
+    if(event.key==="Enter"){event.preventDefault();addTopLocation();}
+  });
+  addTop.append(label,topInput,topButton);
+  wrap.append(addTop);
+
+  // Warm the root cache without showing a blocking loading state.
+  refreshPresetLocations(profile,{rerender:false}).catch(()=>{});
+  return wrap;
+}
+
 function renderTreeNode(profile,node,depth){
   node.children??=[];
   const item=document.createElement("div");
@@ -1062,7 +1374,8 @@ function renderUploadLocationBuilder(){
     const input=document.createElement("input");
     input.type="text";
     input.className="upload-path-input";
-    input.value=index===0?"":(segment||"");
+    // This field means "create new" only. Never mirror an existing selection into it.
+    input.value="";
     input.placeholder="Or create a new child…";
     input.hidden=index===0;
 
@@ -1080,12 +1393,11 @@ function renderUploadLocationBuilder(){
     remove.title="Remove this level from the upload path only. Nothing is deleted from R2.";
     remove.hidden=index===0;
 
-    select.addEventListener("change",async()=>{
+    select.addEventListener("change",()=>{
       if(!select.value)return;
       uploadLocationSegments[index]=select.value;
       uploadLocationSegments=uploadLocationSegments.slice(0,index+1);
       syncUploadBuilderPrefix();
-      if(index>0)await materializeUploadBuilderPrefix();
       renderUploadLocationBuilder();
     });
 
@@ -1471,7 +1783,7 @@ function setWorkspacePreviewExpanded(expanded){
   const grid=document.querySelector(".explorer-body");
   grid?.classList.toggle("expanded",workspacePreviewExpanded);
   if (workspacePreviewExpanded) $("explorer")?.focus?.({ preventScroll:true });
-  const button=$("#preview-expand")||document.querySelector("#workspace-preview .preview-head button:last-child");
+  const button=$("preview-expand")||document.querySelector("#workspace-preview .preview-head button:last-child");
   if(button)button.textContent=workspacePreviewExpanded?"Collapse":"Expand";
 }
 function setWorkspacePreviewLightbox(enabled){
@@ -1494,7 +1806,7 @@ function setWorkspacePreviewLightbox(enabled){
     return;
   }
 
-  const preview=$("#workspace-preview");
+  const preview=$("workspace-preview");
   if(!preview)return;
 
   const source=preview.querySelector(".preview-media, .text-preview");
