@@ -89,6 +89,10 @@ async function refreshPresetLocations(profile,{rerender=true}={}){
     ...leafMenuPrefixes(profile.menuTree||[])
   ].map((value)=>String(value||"").trim().replace(/^\/+|\/+$/g,"")).filter(Boolean));
 
+  // Show everything REDOWN already knows immediately. The Cloudflare lookup below
+  // only enriches this cache; it never blocks the preset editor.
+  presetLocationCache.set(key,known);
+
   try{
     const root=await send({
       type:"cfFolderChildren",
@@ -109,6 +113,8 @@ async function refreshPresetLocations(profile,{rerender=true}={}){
 
 
 function renderTree(profile){
+  if(profile?.type==="cloudflare-r2")return renderR2LocationMenu(profile);
+
   const wrap=document.createElement("div");
   wrap.className="tree-editor";
 
@@ -192,6 +198,312 @@ function renderTree(profile){
   wrap.append(addRoot);
   return wrap;
 }
+
+function presetKnownLocations(profile){
+  const key=presetCacheKey(profile);
+  const known=new Set([
+    ...(presetLocationCache.get(key)||[]),
+    ...Object.values(profile.folders||{}),
+    ...leafMenuPrefixes(profile.menuTree||[])
+  ].map((value)=>String(value||"").trim().replace(/^\/+|\/+$/g,"")).filter(Boolean));
+  presetLocationCache.set(key,known);
+  return known;
+}
+function presetImmediateChildren(profile,parentPrefix=""){
+  const parent=String(parentPrefix||"").replace(/^\/+|\/+$/g,"");
+  const parentParts=parent.split("/").filter(Boolean);
+  const seen=new Set();
+  for(const raw of presetKnownLocations(profile)){
+    const parts=String(raw||"").split("/").filter(Boolean);
+    let matches=true;
+    for(let i=0;i<parentParts.length;i++){
+      if(parts[i]!==parentParts[i]){matches=false;break;}
+    }
+    if(!matches)continue;
+    const child=parts[parentParts.length];
+    if(child)seen.add(child);
+  }
+  return Array.from(seen).sort((a,b)=>a.localeCompare(b,undefined,{numeric:true,sensitivity:"base"}));
+}
+async function hydratePresetChildren(profile,parentPrefix,select){
+  try{
+    const cleanParent=String(parentPrefix||"").replace(/^\/+|\/+$/g,"");
+    const result=await send({
+      type:"cfFolderChildren",
+      accountId:profile.accountId,
+      bucketName:profile.bucketName,
+      parentPrefix:cleanParent,
+      limit:250
+    });
+    if(!result?.ok)return;
+    const known=presetKnownLocations(profile);
+    const existing=new Set(Array.from(select.options).map((option)=>option.value));
+    for(const child of result.children||[]){
+      const clean=String(child||"").trim().replace(/^\/+|\/+$/g,"");
+      if(!clean)continue;
+      const full=cleanParent?cleanParent+"/"+clean:clean;
+      known.add(full);
+      if(!existing.has(clean)){
+        const option=document.createElement("option");
+        option.value=clean;
+        option.textContent=clean;
+        select.append(option);
+        existing.add(clean);
+      }
+    }
+    presetLocationCache.set(presetCacheKey(profile),known);
+  }catch{}
+}
+function renderR2LocationMenu(profile){
+  profile.menuTree??=[];
+  const wrap=document.createElement("div");
+  wrap.className="tree-editor r2-location-menu";
+
+  const heading=document.createElement("div");
+  heading.className="tree-heading";
+  const copy=document.createElement("div");
+  const strong=document.createElement("strong");
+  strong.textContent="Right-click behavior";
+  const small=document.createElement("div");
+  small.className="meta";
+  small.textContent=profile.menuTree.length
+    ?"Nested menu follows real R2 locations. Existing folders appear immediately; deeper folders refresh quietly in the background."
+    :"Quick send uses the destination selected above.";
+  copy.append(strong,small);
+
+  const controls=document.createElement("div");
+  controls.className="row-actions";
+  const refresh=document.createElement("button");
+  refresh.className="ghost";
+  refresh.type="button";
+  refresh.textContent="Refresh locations";
+  refresh.addEventListener("click",async()=>{
+    refresh.disabled=true;
+    refresh.textContent="Refreshing…";
+    try{
+      await refreshPresetLocations(profile,{rerender:false});
+      renderProfiles();
+    }finally{
+      refresh.disabled=false;
+      refresh.textContent="Refresh locations";
+    }
+  });
+
+  const quick=document.createElement("button");
+  quick.className=profile.menuTree.length?"ghost":"secondary";
+  quick.type="button";
+  quick.textContent="Quick send";
+  quick.addEventListener("click",()=>{
+    profile.menuTree=[];
+    scheduleSave();
+    renderProfiles();
+  });
+
+  const nested=document.createElement("button");
+  nested.className=profile.menuTree.length?"secondary":"ghost";
+  nested.type="button";
+  nested.textContent="Nested menu";
+  nested.addEventListener("click",()=>{
+    if(!profile.menuTree.length){
+      const roots=presetImmediateChildren(profile,"");
+      profile.menuTree=roots.slice(0,4).map((name)=>({
+        id:uid(),label:name,prefix:name,category:"files",children:[]
+      }));
+      if(!profile.menuTree.length){
+        const fallback=String(profile.defaultPrefix||"files").split("/").filter(Boolean)[0]||"files";
+        profile.menuTree=[{id:uid(),label:fallback,prefix:fallback,category:"files",children:[]}];
+      }
+    }
+    scheduleSave();
+    renderProfiles();
+  });
+
+  controls.append(refresh,quick,nested);
+  heading.append(copy,controls);
+  wrap.append(heading);
+  if(!profile.menuTree.length)return wrap;
+
+  const note=document.createElement("div");
+  note.className="tree-note r2-location-note";
+  note.textContent="Choose real folders from the dropdowns. The blank fields are only for creating something new.";
+  wrap.append(note);
+
+  const list=document.createElement("div");
+  list.className="r2-location-list";
+
+  const nodeParentPrefix=(node,parents)=>{
+    if(!parents.length)return "";
+    return String(parents[parents.length-1]?.prefix||"").replace(/^\/+|\/+$/g,"");
+  };
+
+  const renderNode=(node,depth,parents=[])=>{
+    node.children??=[];
+    const parentPrefix=nodeParentPrefix(node,parents);
+    const currentPrefix=String(node.prefix||"").replace(/^\/+|\/+$/g,"");
+    const currentLeaf=currentPrefix.split("/").filter(Boolean).pop()||"";
+
+    const shell=document.createElement("div");
+    shell.className="r2-location-node";
+    shell.style.setProperty("--depth",String(depth));
+
+    const row=document.createElement("div");
+    row.className="r2-location-row";
+
+    const branch=document.createElement("div");
+    branch.className="r2-location-branch";
+    branch.textContent=node.children.length?"▾":"•";
+
+    const select=document.createElement("select");
+    select.className="r2-location-select";
+    const placeholder=document.createElement("option");
+    placeholder.value="";
+    placeholder.textContent=depth===0?"Choose existing location…":"Choose existing child…";
+    select.append(placeholder);
+
+    const children=presetImmediateChildren(profile,parentPrefix);
+    if(currentLeaf&&!children.includes(currentLeaf))children.push(currentLeaf);
+    children.sort((a,b)=>a.localeCompare(b,undefined,{numeric:true,sensitivity:"base"}));
+    for(const child of children){
+      const option=document.createElement("option");
+      option.value=child;
+      option.textContent=child;
+      option.selected=child===currentLeaf;
+      select.append(option);
+    }
+
+    const create=document.createElement("input");
+    create.type="text";
+    create.className="r2-location-create";
+    create.value="";
+    create.placeholder=depth===0
+      ?"Create new location…"
+      :"Create new child…";
+    create.setAttribute("aria-label",create.placeholder);
+
+    const add=document.createElement("button");
+    add.type="button";
+    add.className="mini tree-add";
+    add.textContent="+";
+    add.title="Add a child under this location";
+
+    const remove=document.createElement("button");
+    remove.type="button";
+    remove.className="mini danger tree-remove";
+    remove.textContent="×";
+    remove.title="Remove this destination from the right-click preset only";
+
+    const applyLocation=async(leaf,{materialize=false}={})=>{
+      const clean=String(leaf||"").replace(/[\\/\0]/g,"").trim();
+      if(!clean)return false;
+      const full=parentPrefix?parentPrefix+"/"+clean:clean;
+      node.prefix=full;
+      node.label=clean;
+      node.category=node.category||"files";
+      scheduleSave();
+
+      const known=presetKnownLocations(profile);
+      known.add(full);
+      presetLocationCache.set(presetCacheKey(profile),known);
+
+      if(materialize){
+        try{
+          await saveProfiles();
+          await ensureProfileMenuPrefixes(profile,[full]);
+        }catch{}
+      }
+      return true;
+    };
+
+    select.addEventListener("change",async()=>{
+      if(!select.value)return;
+      await applyLocation(select.value,{materialize:false});
+      renderProfiles();
+    });
+
+    const createLocation=async()=>{
+      const clean=create.value.replace(/[\\/\0]/g,"").trim();
+      if(!clean)return false;
+      await applyLocation(clean,{materialize:true});
+      create.value="";
+      renderProfiles();
+      return true;
+    };
+    create.addEventListener("keydown",(event)=>{
+      if(event.key==="Enter"){event.preventDefault();createLocation();}
+    });
+
+    add.addEventListener("click",async()=>{
+      if(!node.prefix){
+        const made=await createLocation();
+        if(!made)return;
+      }
+      node.children.push({id:uid(),label:"",prefix:"",category:"files",children:[]});
+      scheduleSave();
+      renderProfiles();
+    });
+
+    remove.addEventListener("click",()=>{
+      removeNode(profile.menuTree,node.id);
+      scheduleSave();
+      renderProfiles();
+    });
+
+    row.append(branch,select,create,add,remove);
+    shell.append(row);
+
+    hydratePresetChildren(profile,parentPrefix,select);
+
+    if(node.children.length){
+      const kids=document.createElement("div");
+      kids.className="r2-location-children";
+      for(const child of node.children)kids.append(renderNode(child,depth+1,[...parents,node]));
+      shell.append(kids);
+    }
+    return shell;
+  };
+
+  for(const node of profile.menuTree)list.append(renderNode(node,0,[]));
+  wrap.append(list);
+
+  const addTop=document.createElement("div");
+  addTop.className="r2-add-top";
+  const label=document.createElement("div");
+  label.className="r2-add-top-label";
+  label.textContent="New top-level location";
+  const topInput=document.createElement("input");
+  topInput.type="text";
+  topInput.placeholder="Create a new top-level location…";
+  const topButton=document.createElement("button");
+  topButton.type="button";
+  topButton.className="secondary";
+  topButton.textContent="Add";
+  const addTopLocation=async()=>{
+    const clean=topInput.value.replace(/[\\/\0]/g,"").trim();
+    if(!clean)return;
+    profile.menuTree.push({id:uid(),label:clean,prefix:clean,category:"files",children:[]});
+    const known=presetKnownLocations(profile);
+    known.add(clean);
+    presetLocationCache.set(presetCacheKey(profile),known);
+    try{
+      await saveProfiles();
+      await ensureProfileMenuPrefixes(profile,[clean]);
+    }catch{}
+    topInput.value="";
+    scheduleSave();
+    renderProfiles();
+  };
+  topButton.addEventListener("click",addTopLocation);
+  topInput.addEventListener("keydown",(event)=>{
+    if(event.key==="Enter"){event.preventDefault();addTopLocation();}
+  });
+  addTop.append(label,topInput,topButton);
+  wrap.append(addTop);
+
+  // Warm the root cache without showing a blocking loading state.
+  refreshPresetLocations(profile,{rerender:false}).catch(()=>{});
+  return wrap;
+}
+
 function renderTreeNode(profile,node,depth){
   node.children??=[];
   const item=document.createElement("div");
@@ -439,17 +751,15 @@ function renderProfiles(){
     top.append(left,badge);
 
     const grid=document.createElement("div"); grid.className="grid";
-    grid.append(
-      field("Menu label",p.menuLabel||p.name||"",v=>p.menuLabel=v),
-      p.type==="cloudflare-r2"
-        ? defaultLocationField(p)
-        : field("Default path",p.defaultPath||"assets/files",v=>p.defaultPath=v),
-      field("Order",String(p.menuOrder??index),v=>p.menuOrder=Number(v)||0,"number")
-    );
-
     if(p.type==="cloudflare-r2"){
+      grid.append(r2PresetDestinationField(p));
       grid.append(assetCorsControl(p));
     }else{
+      grid.append(
+        field("Menu label",p.menuLabel||p.name||"",v=>p.menuLabel=v),
+        field("Default path",p.defaultPath||"assets/files",v=>p.defaultPath=v),
+        field("Order",String(p.menuOrder??index),v=>p.menuOrder=Number(v)||0,"number")
+      );
       grid.append(
         field("Repository",p.repository||"",v=>p.repository=v,"text","owner/repository"),
         field("Branch",p.branch||"main",v=>p.branch=v),
@@ -489,179 +799,372 @@ function renderProfiles(){
   scheduleSave();
 }
 
-function defaultLocationField(profile){
+function r2PresetDestinationField(profile){
   const wrap=document.createElement("div");
-  wrap.className="default-location-builder";
-  const label=document.createElement("label");
-  label.textContent="Default location";
-  const levels=document.createElement("div");
-  levels.className="location-levels";
-  const hint=document.createElement("div");
-  hint.className="meta";
-  hint.textContent="Choose an existing folder or type a new one at any level. × only removes that level from this builder; it never deletes anything from R2.";
+  wrap.style.gridColumn="1 / -1";
+
+  const table=document.createElement("div");
+  table.className="preset-destination";
+
+  const head=document.createElement("div");
+  head.className="preset-destination-head";
+  ["Level","Existing","Create new","Action"].forEach((text)=>{
+    const cell=document.createElement("div");
+    cell.textContent=text;
+    head.append(cell);
+  });
+  table.append(head);
 
   const cacheKey=profile.accountId+":"+profile.bucketName;
-  let segments=String(profile.defaultPrefix ?? profile.folders?.files ?? "")
-    .split("/").filter(Boolean);
-  if(!segments.length) segments=[""];
+  let segments=String(profile.defaultPrefix||"").split("/").filter(Boolean);
+  let prefixInventory=defaultLocationPrefixCache.get(cacheKey)||[];
 
   const cleanSegment=(value)=>String(value||"")
     .trim()
     .replace(/[\\/\0]/g,"")
     .replace(/^\.+$/,"");
 
-  const allPrefixes=()=>defaultLocationPrefixCache.get(cacheKey)||[];
-
   const immediateChildren=(parentSegments)=>{
-    const parent=parentSegments.filter(Boolean).join("/");
+    const parent=parentSegments.filter(Boolean);
     const seen=new Set();
-    for(const raw of allPrefixes()){
+    for(const raw of prefixInventory){
       const parts=String(raw||"").split("/").filter(Boolean);
-      if(parentSegments.filter(Boolean).some((part,index)=>parts[index]!==part)) continue;
-      const child=parts[parentSegments.filter(Boolean).length];
-      if(child) seen.add(child);
+      let matches=true;
+      for(let i=0;i<parent.length;i++){
+        if(parts[i]!==parent[i]){matches=false;break;}
+      }
+      if(!matches)continue;
+      const child=parts[parent.length];
+      if(child)seen.add(child);
     }
     return Array.from(seen).sort((a,b)=>a.localeCompare(b,undefined,{numeric:true,sensitivity:"base"}));
   };
 
   const currentPrefix=()=>segments.map(cleanSegment).filter(Boolean).join("/");
+  const breadcrumb=document.createElement("div");
+  breadcrumb.className="preset-breadcrumb";
+  const status=document.createElement("div");
+  status.className="preset-new-bucket-status";
 
-  const commit=async({materialize=true}={})=>{
-    segments=segments.map(cleanSegment);
+  const updateBreadcrumb=()=>{
+    const prefix=currentPrefix();
+    breadcrumb.textContent=profile.bucketName+(prefix?" / "+prefix:" / (bucket root)");
+  };
+
+  const commitPrefix=async({materialize=false}={})=>{
+    segments=segments.map(cleanSegment).filter(Boolean);
     profile.defaultPrefix=currentPrefix();
     scheduleSave();
+    updateBreadcrumb();
     if(materialize&&profile.defaultPrefix){
       try{
         await saveProfiles();
         await ensureProfileMenuPrefixes(profile,[profile.defaultPrefix]);
-        hint.textContent="Default location ready: /"+profile.defaultPrefix;
-        const cached=new Set(allPrefixes());
-        cached.add(profile.defaultPrefix);
-        defaultLocationPrefixCache.set(cacheKey,Array.from(cached));
+        const known=new Set(prefixInventory);
+        known.add(profile.defaultPrefix);
+        prefixInventory=Array.from(known);
+        defaultLocationPrefixCache.set(profile.accountId+":"+profile.bucketName,prefixInventory);
+        status.textContent="Location ready.";
       }catch(error){
-        hint.textContent="Saved. REDOWN will create this location when Cloudflare access is ready.";
+        status.textContent="Saved. REDOWN will create this location when Cloudflare is ready.";
       }
-    }else if(!profile.defaultPrefix){
-      hint.textContent="Bucket root is the default location. Nothing in R2 was deleted.";
     }
   };
 
+  const adoptPreparedProfile=(prepared)=>{
+    if(!prepared)return;
+    const keep={
+      id:profile.id,
+      menuTree:profile.menuTree,
+      menuOrder:profile.menuOrder,
+      showInContextMenu:profile.showInContextMenu,
+      defaultPrefix:profile.defaultPrefix,
+      defaultCategory:profile.defaultCategory
+    };
+    Object.assign(profile,prepared,keep);
+    profile.name=prepared.bucketName||prepared.name||profile.name;
+    profile.menuLabel="";
+    prefixInventory=[];
+    defaultLocationPrefixCache.delete(cacheKey);
+  };
+
+  const bucketRow=document.createElement("div");
+  bucketRow.className="preset-destination-row";
+
+  const bucketLevel=document.createElement("div");
+  bucketLevel.className="preset-level";
+  bucketLevel.textContent="Bucket";
+
+  const bucketExisting=document.createElement("div");
+  bucketExisting.className="preset-existing";
+  const bucketSelect=document.createElement("select");
+  bucketSelect.setAttribute("aria-label","Existing bucket");
+  const bucketNames=new Set([profile.bucketName]);
+  for(const p of r2Profiles()){
+    if(p.accountId===profile.accountId&&p.bucketName)bucketNames.add(p.bucketName);
+  }
+  for(const bucket of (explorerBuckets.get(profile.accountId)||[])){
+    if(bucket?.name)bucketNames.add(bucket.name);
+  }
+  Array.from(bucketNames).sort((a,b)=>a.localeCompare(b,undefined,{numeric:true,sensitivity:"base"})).forEach((name)=>{
+    const option=document.createElement("option");
+    option.value=name;
+    option.textContent=name;
+    option.selected=name===profile.bucketName;
+    bucketSelect.append(option);
+  });
+  bucketExisting.append(bucketSelect);
+
+  const bucketNew=document.createElement("div");
+  bucketNew.className="preset-new";
+  const bucketInput=document.createElement("input");
+  bucketInput.type="text";
+  bucketInput.placeholder="new-bucket";
+  bucketInput.setAttribute("aria-label","Create a new bucket");
+  bucketNew.append(bucketInput);
+
+  const bucketActions=document.createElement("div");
+  bucketActions.className="preset-actions";
+  const createBucketButton=document.createElement("button");
+  createBucketButton.type="button";
+  createBucketButton.className="mini";
+  createBucketButton.textContent="Create";
+  createBucketButton.title="Create this bucket and use it for this preset";
+  bucketActions.append(createBucketButton);
+
+  const switchBucket=async(name)=>{
+    const clean=String(name||"").trim();
+    if(!clean||clean===profile.bucketName)return;
+    status.textContent="Switching preset to "+clean+"…";
+    bucketSelect.disabled=true;
+    try{
+      let prepared=r2Profiles().find((p)=>p.accountId===profile.accountId&&p.bucketName===clean);
+      if(!prepared){
+        const result=await send({
+          type:"cfProvision",
+          accountId:profile.accountId,
+          accountName:profile.accountName||accountName(profile.accountId),
+          bucketName:clean,
+          profileName:clean,
+          folders:{"3d":"3d","2d":"2d","videos":"videos","files":"files"}
+        });
+        if(!result?.ok)throw new Error(result?.error||"Could not prepare bucket");
+        prepared=result.profile;
+      }
+      adoptPreparedProfile(prepared);
+      await saveProfiles();
+      status.textContent="Preset now uses "+clean+".";
+      renderProfiles();
+    }catch(error){
+      status.textContent=error?.message||String(error);
+      bucketSelect.value=profile.bucketName;
+    }finally{
+      bucketSelect.disabled=false;
+    }
+  };
+
+  bucketSelect.addEventListener("change",()=>switchBucket(bucketSelect.value));
+
+  const createAndUseBucket=async()=>{
+    const name=bucketInput.value.trim().toLowerCase();
+    if(!name){status.textContent="Type a bucket name first.";bucketInput.focus();return;}
+    createBucketButton.disabled=true;
+    status.textContent="Creating "+name+"…";
+    try{
+      const created=await send({type:"cfCreateBucket",accountId:profile.accountId,name});
+      if(!created?.ok)throw new Error(created?.error||"Could not create bucket");
+      const prepared=await send({
+        type:"cfProvision",
+        accountId:profile.accountId,
+        accountName:profile.accountName||accountName(profile.accountId),
+        bucketName:name,
+        profileName:name,
+        folders:{"3d":"3d","2d":"2d","videos":"videos","files":"files"}
+      });
+      if(!prepared?.ok)throw new Error(prepared?.error||"Could not prepare bucket");
+      adoptPreparedProfile(prepared.profile);
+      bucketInput.value="";
+      await saveProfiles();
+      status.textContent=name+" created and selected.";
+      renderProfiles();
+    }catch(error){
+      status.textContent=error?.message||String(error);
+    }finally{
+      createBucketButton.disabled=false;
+    }
+  };
+  createBucketButton.addEventListener("click",createAndUseBucket);
+  bucketInput.addEventListener("keydown",(event)=>{
+    if(event.key==="Enter"){event.preventDefault();createAndUseBucket();}
+  });
+
+  bucketRow.append(bucketLevel,bucketExisting,bucketNew,bucketActions);
+  table.append(bucketRow);
+
   const renderLevels=()=>{
-    levels.replaceChildren();
+    table.querySelectorAll(".preset-location-row").forEach((row)=>row.remove());
+
     segments.forEach((segment,index)=>{
       const row=document.createElement("div");
-      row.className="location-level-row";
+      row.className="preset-destination-row preset-location-row";
 
-      const parentSegments=segments.slice(0,index).map(cleanSegment).filter(Boolean);
+      const level=document.createElement("div");
+      level.className="preset-level";
+      level.textContent=index===0?"Location":"Child "+index;
+
+      const existing=document.createElement("div");
+      existing.className="preset-existing";
       const select=document.createElement("select");
-      select.className="location-level-select";
+      select.setAttribute("aria-label",index===0?"Existing location":"Existing child location");
       const placeholder=document.createElement("option");
       placeholder.value="";
       placeholder.textContent=index===0?"Choose existing folder…":"Choose existing child…";
       select.append(placeholder);
-
-      for(const child of immediateChildren(parentSegments)){
+      const parent=segments.slice(0,index).map(cleanSegment).filter(Boolean);
+      for(const child of immediateChildren(parent)){
         const option=document.createElement("option");
         option.value=child;
         option.textContent=child;
         option.selected=child===cleanSegment(segment);
         select.append(option);
       }
+      existing.append(select);
 
+      const create=document.createElement("div");
+      create.className="preset-new";
       const input=document.createElement("input");
       input.type="text";
-      input.className="location-level-input";
-      input.value=segment||"";
-      input.placeholder=index===0?"or create a new folder":"or create a new child";
+      input.placeholder=index===0?"new folder":"new child";
+      input.setAttribute("aria-label",input.placeholder);
+      create.append(input);
 
+      const actions=document.createElement("div");
+      actions.className="preset-actions";
       const add=document.createElement("button");
       add.type="button";
       add.className="mini";
-      add.textContent="+ Child";
-      add.title="Add another location level";
-
+      add.textContent="+";
+      add.title="Add a child below this level";
       const remove=document.createElement("button");
       remove.type="button";
-      remove.className="mini danger location-level-remove";
+      remove.className="mini danger";
       remove.textContent="×";
-      remove.title="Remove this level from the builder only. This never deletes the R2 folder.";
+      remove.title="Remove this level and every lower level from this preset only";
+      actions.append(add,remove);
 
       select.addEventListener("change",async()=>{
         if(!select.value)return;
         segments[index]=select.value;
         segments=segments.slice(0,index+1);
-        segments.push("");
-        await commit({materialize:true});
+        await commitPrefix({materialize:false});
         renderLevels();
       });
 
-      input.addEventListener("input",()=>{
-        segments[index]=cleanSegment(input.value);
-        profile.defaultPrefix=currentPrefix();
-        scheduleSave();
-      });
-      input.addEventListener("change",async()=>{
-        segments[index]=cleanSegment(input.value);
-        await commit({materialize:true});
-        renderLevels();
-      });
-      input.addEventListener("blur",async()=>{
-        segments[index]=cleanSegment(input.value);
-        await commit({materialize:true});
-      });
-
-      add.addEventListener("click",async()=>{
-        segments[index]=cleanSegment(input.value||select.value||segments[index]);
-        segments=segments.slice(0,index+1);
-        if(!segments[index]){
-          hint.textContent="Choose or create this level before adding a child.";
+      const useTyped=async({addChild=false}={})=>{
+        const typed=cleanSegment(input.value);
+        if(typed){
+          segments[index]=typed;
+          segments=segments.slice(0,index+1);
+          input.value="";
+          await commitPrefix({materialize:true});
+        }else if(!cleanSegment(segments[index])){
+          status.textContent="Choose an existing location or type a new one first.";
+          input.focus();
           return;
         }
-        await commit({materialize:true});
-        segments.push("");
-        renderLevels();
-        levels.lastElementChild?.querySelector("input")?.focus();
-      });
-
-      remove.addEventListener("click",async()=>{
-        if(segments.length===1){
-          segments=[""];
-        }else{
-          segments=segments.slice(0,index);
-          if(!segments.length)segments=[""];
+        if(addChild){
+          segments=segments.slice(0,index+1);
+          segments.push("");
+          await commitPrefix({materialize:false});
         }
-        await commit({materialize:false});
-        hint.textContent="Removed from the builder only. Existing R2 folders and files were not changed.";
+        renderLevels();
+        if(addChild)table.querySelector(".preset-location-row:last-of-type input")?.focus();
+      };
+
+      input.addEventListener("keydown",(event)=>{
+        if(event.key==="Enter"){event.preventDefault();useTyped({addChild:false});}
+      });
+      input.addEventListener("change",()=>useTyped({addChild:false}));
+
+      add.addEventListener("click",()=>useTyped({addChild:true}));
+      remove.addEventListener("click",async()=>{
+        segments=segments.slice(0,index);
+        await commitPrefix({materialize:false});
+        status.textContent="Removed from this preset only. Nothing was deleted from R2.";
         renderLevels();
       });
 
-      row.append(select,input,add,remove);
-      levels.append(row);
+      row.append(level,existing,create,actions);
+      table.append(row);
     });
+    updateBreadcrumb();
   };
 
+  const foot=document.createElement("div");
+  foot.className="preset-destination-foot";
+  const addLevel=document.createElement("button");
+  addLevel.type="button";
+  addLevel.className="ghost";
+  addLevel.textContent="+ Add location level";
+  addLevel.addEventListener("click",()=>{
+    if(segments.length&& !cleanSegment(segments[segments.length-1])){
+      table.querySelector(".preset-location-row:last-of-type input")?.focus();
+      return;
+    }
+    segments.push("");
+    renderLevels();
+    table.querySelector(".preset-location-row:last-of-type input")?.focus();
+  });
+  foot.append(breadcrumb,addLevel);
+  table.append(foot);
+  wrap.append(table,status);
+
+  renderLevels();
+
   const loadExisting=async()=>{
-    if(defaultLocationPrefixCache.has(cacheKey)){
+    const liveKey=profile.accountId+":"+profile.bucketName;
+    if(defaultLocationPrefixCache.has(liveKey)){
+      prefixInventory=defaultLocationPrefixCache.get(liveKey)||[];
       renderLevels();
       return;
     }
-    hint.innerHTML='<span class="operation-spinner"></span>Loading existing folders…';
-    const result=await send({
-      type:"cfFolderPrefixes",
-      accountId:profile.accountId,
-      bucketName:profile.bucketName,
-      limit:5000
-    });
-    defaultLocationPrefixCache.set(cacheKey,result?.ok?(result.prefixes||[]):[]);
-    hint.textContent=result?.ok
-      ?"Choose existing folders or create new ones. You can continue to any depth."
-      :"Existing folders could not be loaded yet, but you can still create a new path.";
+    status.innerHTML='<span class="operation-spinner"></span>Loading existing folders…';
+    const timeout=new Promise((resolve)=>setTimeout(()=>resolve({ok:false,timeout:true}),4500));
+    let result;
+    try{
+      result=await Promise.race([
+        send({
+          type:"cfFolderPrefixes",
+          accountId:profile.accountId,
+          bucketName:profile.bucketName,
+          limit:5000
+        }),
+        timeout
+      ]);
+    }catch{
+      result={ok:false};
+    }
+    if(result?.ok){
+      prefixInventory=result.prefixes||[];
+      defaultLocationPrefixCache.set(liveKey,prefixInventory);
+      status.textContent="Existing locations loaded.";
+    }else if(result?.timeout){
+      const fallback=new Set([
+        ...Object.values(profile.folders||{}),
+        ...leafMenuPrefixes(profile.menuTree||[])
+      ].map((value)=>String(value||"").replace(/^\/+|\/+$/g,"")).filter(Boolean));
+      prefixInventory=Array.from(fallback);
+      defaultLocationPrefixCache.set(liveKey,prefixInventory);
+      status.textContent="Showing known locations now. Use Refresh locations for a deeper scan.";
+    }else{
+      prefixInventory=[];
+      defaultLocationPrefixCache.set(liveKey,[]);
+      status.textContent="Existing folders are unavailable right now, but you can still create any path.";
+    }
     renderLevels();
   };
-
-  wrap.append(label,levels,hint);
-  renderLevels();
   loadExisting();
+
   return wrap;
 }
 
@@ -871,7 +1374,8 @@ function renderUploadLocationBuilder(){
     const input=document.createElement("input");
     input.type="text";
     input.className="upload-path-input";
-    input.value=index===0?"":(segment||"");
+    // This field means "create new" only. Never mirror an existing selection into it.
+    input.value="";
     input.placeholder="Or create a new child…";
     input.hidden=index===0;
 
@@ -889,12 +1393,11 @@ function renderUploadLocationBuilder(){
     remove.title="Remove this level from the upload path only. Nothing is deleted from R2.";
     remove.hidden=index===0;
 
-    select.addEventListener("change",async()=>{
+    select.addEventListener("change",()=>{
       if(!select.value)return;
       uploadLocationSegments[index]=select.value;
       uploadLocationSegments=uploadLocationSegments.slice(0,index+1);
       syncUploadBuilderPrefix();
-      if(index>0)await materializeUploadBuilderPrefix();
       renderUploadLocationBuilder();
     });
 
@@ -1261,10 +1764,10 @@ async function showWorkspacePreview(obj,row,urlOverride=""){
 }
 
 function workspaceLightboxLayer(){
-  return document.querySelector(".preview-lightbox-layer");
+  return document.getElementById("workspace-lightbox");
 }
 function workspaceLightboxOpen(){
-  return Boolean(workspaceLightboxLayer());
+  return Boolean(workspaceLightboxLayer()?.isConnected);
 }
 function syncWorkspaceLightboxButtons(){
   const open=workspaceLightboxOpen();
@@ -1280,7 +1783,7 @@ function setWorkspacePreviewExpanded(expanded){
   const grid=document.querySelector(".explorer-body");
   grid?.classList.toggle("expanded",workspacePreviewExpanded);
   if (workspacePreviewExpanded) $("explorer")?.focus?.({ preventScroll:true });
-  const button=$("#preview-expand")||document.querySelector("#workspace-preview .preview-head button:last-child");
+  const button=$("preview-expand")||document.querySelector("#workspace-preview .preview-head button:last-child");
   if(button)button.textContent=workspacePreviewExpanded?"Collapse":"Expand";
 }
 function setWorkspacePreviewLightbox(enabled){
@@ -1290,6 +1793,7 @@ function setWorkspacePreviewLightbox(enabled){
   if(!shouldOpen){
     existing?.remove();
     document.body.classList.remove("preview-lightbox-open");
+    document.documentElement.classList.remove("preview-lightbox-open");
     workspacePreviewLightbox=false;
     syncWorkspaceLightboxButtons();
     $("explorer")?.focus?.({preventScroll:true});
@@ -1302,7 +1806,7 @@ function setWorkspacePreviewLightbox(enabled){
     return;
   }
 
-  const preview=$("#workspace-preview");
+  const preview=$("workspace-preview");
   if(!preview)return;
 
   const source=preview.querySelector(".preview-media, .text-preview");
@@ -1319,19 +1823,26 @@ function setWorkspacePreviewLightbox(enabled){
   }
 
   const layer=document.createElement("div");
+  layer.id="workspace-lightbox";
   layer.className="preview-lightbox-layer";
   layer.setAttribute("role","dialog");
   layer.setAttribute("aria-modal","true");
   layer.setAttribute("aria-label","File lightbox");
+  layer.style.cssText="position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;z-index:2147483646!important;display:grid!important;place-items:center!important;pointer-events:auto!important;";
 
-  const backdrop=document.createElement("button");
-  backdrop.type="button";
+  const backdrop=document.createElement("div");
   backdrop.className="preview-lightbox-backdrop";
+  backdrop.setAttribute("role","button");
+  backdrop.setAttribute("tabindex","0");
   backdrop.setAttribute("aria-label","Close lightbox");
   backdrop.addEventListener("click",()=>setWorkspacePreviewLightbox(false));
+  backdrop.addEventListener("keydown",(event)=>{
+    if(event.key==="Enter"||event.key===" "){event.preventDefault();setWorkspacePreviewLightbox(false);}
+  });
 
   const panel=document.createElement("div");
   panel.className="preview-lightbox-panel";
+  panel.setAttribute("role","document");
 
   const head=document.createElement("div");
   head.className="preview-lightbox-head";
@@ -1350,17 +1861,29 @@ function setWorkspacePreviewLightbox(enabled){
   stage.className="preview-lightbox-stage";
   const clone=source.cloneNode(true);
   clone.classList.add("lightbox-copy");
-  stage.append(clone);
 
+  clone.querySelectorAll?.("video,audio").forEach((media)=>{
+    media.controls=true;
+    media.preload="metadata";
+  });
+  clone.querySelectorAll?.("iframe,img,video,audio,model-viewer").forEach((node)=>{
+    const original=source.querySelector?.(node.tagName.toLowerCase());
+    const resolved=original?.currentSrc||original?.src||original?.getAttribute?.("src");
+    if(resolved)node.setAttribute("src",resolved);
+  });
+
+  stage.append(clone);
   head.append(title,close);
   panel.append(head,stage);
   layer.append(backdrop,panel);
-  document.body.append(layer);
+
+  (document.documentElement||document.body).append(layer);
   document.body.classList.add("preview-lightbox-open");
+  document.documentElement.classList.add("preview-lightbox-open");
 
   workspacePreviewLightbox=true;
   syncWorkspaceLightboxButtons();
-  close.focus({preventScroll:true});
+  requestAnimationFrame(()=>close.focus({preventScroll:true}));
 }
 
 
