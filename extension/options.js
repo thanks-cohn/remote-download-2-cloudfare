@@ -8,11 +8,24 @@ let workspacePreviewExpanded=false;
 let workspacePreviewLightbox=false;
 let workspacePreviewRequestId=0;
 const defaultLocationPrefixCache=new Map();
+const presetLocationCache=new Map();
 let uploadLocationPrefixes=[];
 let uploadLocationSegments=[""];
 
 function uid(){return crypto.randomUUID();}
-function setStatus(id,msg,kind=""){const el=$(id);el.textContent=msg||"";el.className="status"+(kind?" "+kind:"");}
+function safeUiMessage(message){
+  const raw=String(message||"");
+  if(/unauthorized|\b401\b|\b403\b/i.test(raw))
+    return "Connecting… REDOWN is verifying Cloudflare access.";
+  return raw;
+}
+function setStatus(id,msg,kind=""){
+  const el=$(id);
+  const raw=String(msg||"");
+  const transient=/unauthorized|\b401\b|\b403\b/i.test(raw);
+  el.textContent=transient?"Connecting… REDOWN is verifying Cloudflare access.":raw;
+  el.className="status"+((transient?"":kind)?" "+kind:"");
+}
 async function send(message){return chrome.runtime.sendMessage(message);}
 async function saveProfiles(){await chrome.storage.local.set({profiles});}
 function displayName(p){return p.name||p.bucketName||p.repository||"Destination";}
@@ -46,8 +59,8 @@ async function ensureProfileMenuPrefixes(profile, prefixes) {
   if (!clean.length) return;
   const result = await send({
     type:"cfEnsurePrefixes",
-    accountId:target.accountId,
-    bucketName:target.bucketName,
+    accountId:profile.accountId,
+    bucketName:profile.bucketName,
     accountName:profile.accountName,
     prefixes:clean
   });
@@ -64,6 +77,36 @@ function leafMenuPrefixes(nodes) {
   walk(nodes);
   return out;
 }
+function presetCacheKey(profile){
+  return `${profile?.accountId||""}:${profile?.bucketName||""}`;
+}
+async function refreshPresetLocations(profile,{rerender=true}={}){
+  if(profile?.type!=="cloudflare-r2")return [];
+  const key=presetCacheKey(profile);
+  const known=new Set([
+    ...(presetLocationCache.get(presetCacheKey(profile))||[]),
+    ...Object.values(profile.folders||{}),
+    ...leafMenuPrefixes(profile.menuTree||[])
+  ].map((value)=>String(value||"").trim().replace(/^\/+|\/+$/g,"")).filter(Boolean));
+
+  try{
+    const root=await send({
+      type:"cfFolderChildren",
+      accountId:profile.accountId,
+      bucketName:profile.bucketName,
+      parentPrefix:"",
+      limit:250
+    });
+    if(root?.ok){
+      for(const child of root.children||[])known.add(String(child||"").replace(/^\/+|\/+$/g,""));
+    }
+  }catch{}
+
+  presetLocationCache.set(key,known);
+  if(rerender)renderProfiles();
+  return Array.from(known);
+}
+
 
 function renderTree(profile){
   const wrap=document.createElement("div");
@@ -83,6 +126,21 @@ function renderTree(profile){
 
   const controls=document.createElement("div");
   controls.className="row-actions";
+  const refreshLocations=document.createElement("button");
+  refreshLocations.className="ghost";
+  refreshLocations.type="button";
+  refreshLocations.textContent="Refresh locations";
+  refreshLocations.title="Reload available R2 locations for this preset";
+  refreshLocations.addEventListener("click",async()=>{
+    refreshLocations.disabled=true;
+    const previous=refreshLocations.textContent;
+    refreshLocations.textContent="Refreshing…";
+    try{await refreshPresetLocations(profile,{rerender:true});}
+    finally{
+      refreshLocations.disabled=false;
+      refreshLocations.textContent=previous;
+    }
+  });
   const quick=document.createElement("button");
   quick.className=profile.menuTree?.length?"ghost":"secondary";
   quick.textContent="Quick send";
@@ -107,7 +165,7 @@ function renderTree(profile){
     scheduleSave();
     renderProfiles();
   });
-  controls.append(quick,nested);
+  controls.append(refreshLocations,quick,nested);
   heading.append(copy,controls);
   wrap.append(heading);
 
@@ -211,6 +269,15 @@ function renderTreeNode(profile,node,depth){
     try{
       await saveProfiles();
       await ensureProfileMenuPrefixes(profile,[node.prefix]);
+      const clean=String(node.prefix||"").trim().replace(/^\/+|\/+$/g,"");
+      if(clean){
+        const key=presetCacheKey(profile);
+        const known=new Set(presetLocationCache.get(key)||[]);
+        known.add(clean);
+        presetLocationCache.set(key,known);
+      }
+      await refreshPresetLocations(profile,{rerender:false});
+      renderProfiles();
     }catch(error){
       console.warn("REDOWN could not materialize menu prefix:",error?.message||String(error));
     }
@@ -1583,7 +1650,8 @@ function renderOperation() {
   const progress = explorerOperation.total
     ? ` · ${explorerOperation.completed} of ${explorerOperation.total}`
     : "";
-  el.innerHTML = `${explorerOperation.state === "running" ? '<span class="operation-spinner"></span>' : ""}${explorerOperation.message}${progress}`;
+  const message=safeUiMessage(explorerOperation.message);
+  el.innerHTML = `${explorerOperation.state === "running" ? '<span class="connect-progress" aria-label="Connecting"><i></i><i></i><i></i><i></i><i></i></span>' : ""}${message}${progress}`;
 }
 function finishOperation(message, error = false) {
   if (!explorerOperation)
@@ -2023,10 +2091,10 @@ async function browseWorkspace({ append = false } = {}) {
       $("explorer-status").textContent =
         "REDOWN is still waiting for Cloudflare to finish preparing this bucket.";
     }else{
-      $("explorer-status").textContent = friendlyError(
+      $("explorer-status").textContent = safeUiMessage(friendlyError(
         lastError || new Error(result?.error || ""),
         "load this folder",
-      );
+      ));
     }
   } else {
     explorerRawObjects.push(...(result.objects || []));
@@ -3280,6 +3348,9 @@ async function refreshCloudflare(){
   cfAccounts.forEach(a=>{const o=document.createElement("option");o.value=a.id;o.textContent=a.name||a.id;select.append(o);});
   currentAccountId=select.value||"";
   if(currentAccountId)await refreshBuckets();
+  await loadExplorerInventory().catch((error)=>{
+    $("explorer-status").textContent=safeUiMessage(friendlyError(error,"load Cloudflare storage"));
+  });
 }
 async function refreshBuckets(){
   if(!currentAccountId)return;
