@@ -785,6 +785,25 @@ function uploadBuilderChildren(parentSegments){
   }
   return Array.from(seen).sort((a,b)=>a.localeCompare(b,undefined,{numeric:true,sensitivity:"base"}));
 }
+async function fetchUploadBuilderChildren(parentSegments=[]){
+  const target=uploadTarget();
+  if(!target)return [];
+  const parent=parentSegments.filter(Boolean);
+  const result=await send({
+    type:"cfFolderChildren",
+    accountId:target.accountId,
+    bucketName:target.bucketName,
+    parentPrefix:parent.join("/"),
+    limit:250
+  });
+  if(!result?.ok)return [];
+  const children=(result.children||[]).map((value)=>String(value||"").trim()).filter(Boolean);
+  for(const child of children){
+    const full=[...parent,child].join("/");
+    if(full&&!uploadLocationPrefixes.includes(full))uploadLocationPrefixes.push(full);
+  }
+  return children;
+}
 function syncUploadBuilderPrefix(){
   const prefix=uploadLocationSegments.map((part)=>String(part||"").trim().replace(/^\/+|\/+$/g,"")).filter(Boolean).join("/");
   ensureUploadLocationOption(prefix);
@@ -836,6 +855,18 @@ function renderUploadLocationBuilder(){
       option.selected=child===segment;
       select.append(option);
     }
+    fetchUploadBuilderChildren(parent).then((children)=>{
+      if(!select.isConnected)return;
+      const existing=new Set(Array.from(select.options).map((option)=>option.value));
+      for(const child of children){
+        if(existing.has(child))continue;
+        const option=document.createElement("option");
+        option.value=child;
+        option.textContent=child;
+        option.selected=child===uploadLocationSegments[index];
+        select.append(option);
+      }
+    }).catch(()=>{});
 
     const input=document.createElement("input");
     input.type="text";
@@ -933,19 +964,23 @@ async function loadUploadLocations({ preserve = true } = {}) {
     uploadLocationPrefixes=[];
     uploadLocationSegments=[""];
     renderUploadLocationBuilder();
-    if (hint) hint.textContent = "Choose a bucket to load its remote folders.";
+    if (hint) hint.textContent = "Choose a bucket to load its remote locations.";
     return;
   }
 
-  if (hint) hint.innerHTML = '<span class="operation-spinner"></span>Loading remote folders…';
+  if (hint) hint.innerHTML = '<span class="operation-spinner"></span>Loading locations…';
   const result = await send({
-    type:"cfFolderPrefixes",
-    accountId:profile.accountId,
-    bucketName:profile.bucketName,
-    limit:5000
+    type:"cfFolderChildren",
+    accountId:target.accountId,
+    bucketName:target.bucketName,
+    parentPrefix:"",
+    limit:250
   });
 
-  uploadLocationPrefixes = result?.ok ? (result.prefixes || []) : [];
+  uploadLocationPrefixes = result?.ok
+    ? (result.children || []).map((child)=>String(child||"").replace(/^\/+|\/+$/g,"")).filter(Boolean)
+    : [];
+
   for (const value of Object.values(profile?.folders || {})) {
     const clean = String(value || "").replace(/^\/+|\/+$/g, "");
     if (clean && !uploadLocationPrefixes.includes(clean)) uploadLocationPrefixes.push(clean);
@@ -966,8 +1001,8 @@ async function loadUploadLocations({ preserve = true } = {}) {
   renderUploadLocationBuilder();
 
   if (hint) hint.textContent = result?.ok
-    ? "Choose an existing folder or create a new one. Add Child to continue deeper."
-    : "Existing folders could not be loaded yet, but you can still create a new path.";
+    ? "Choose an existing location or create a new child. Deeper rows load only their immediate children."
+    : "Locations are still loading, but you can create a new path now.";
 }
 function renderWorkspaceProfiles(){
   const select=$("local-profile");
