@@ -6,6 +6,8 @@ let workspaceTarget=null;
 let workspaceObjects=[];
 let workspacePreviewExpanded=false;
 let workspacePreviewLightbox=false;
+let workspacePreviewHome=null;
+let workspacePreviewNextSibling=null;
 let workspacePreviewRequestId=0;
 const defaultLocationPrefixCache=new Map();
 let uploadLocationPrefixes=[];
@@ -1171,11 +1173,16 @@ function setWorkspacePreviewLightbox(enabled){
   }
 
   const preview=$("#workspace-preview");
-  preview?.classList.toggle("lightbox",workspacePreviewLightbox);
-  document.body.classList.toggle("preview-lightbox-open",workspacePreviewLightbox);
+  if(!preview)return;
 
   let backdrop=document.querySelector(".preview-lightbox-backdrop");
+
   if (workspacePreviewLightbox) {
+    if(!workspacePreviewHome){
+      workspacePreviewHome=preview.parentNode;
+      workspacePreviewNextSibling=preview.nextSibling;
+    }
+
     if (!backdrop) {
       backdrop=document.createElement("div");
       backdrop.className="preview-lightbox-backdrop";
@@ -1183,14 +1190,36 @@ function setWorkspacePreviewLightbox(enabled){
       backdrop.addEventListener("click",()=>setWorkspacePreviewLightbox(false));
       document.body.append(backdrop);
     }
-    $("explorer")?.focus?.({ preventScroll:true });
+
+    // A true lightbox must live outside the Explorer grid so responsive,
+    // overflow and sidebar layout rules cannot hide or clip its media.
+    if(preview.parentNode!==document.body)document.body.append(preview);
+    preview.classList.add("lightbox");
+    preview.removeAttribute("hidden");
+    preview.style.display="flex";
+    document.body.classList.add("preview-lightbox-open");
+    preview.querySelector(".preview-media img, .preview-media video, .preview-media iframe, model-viewer")?.scrollIntoView?.({block:"center"});
   } else {
+    preview.classList.remove("lightbox");
+    preview.style.removeProperty("display");
+    document.body.classList.remove("preview-lightbox-open");
     backdrop?.remove();
+
+    if(workspacePreviewHome){
+      if(workspacePreviewNextSibling&&workspacePreviewNextSibling.parentNode===workspacePreviewHome)
+        workspacePreviewHome.insertBefore(preview,workspacePreviewNextSibling);
+      else
+        workspacePreviewHome.append(preview);
+    }
+    workspacePreviewHome=null;
+    workspacePreviewNextSibling=null;
+    $("explorer")?.focus?.({preventScroll:true});
   }
 
-  const button=$("#preview-lightbox")||Array.from(document.querySelectorAll("#workspace-preview .preview-head button")).find((el)=>/lightbox/i.test(el.textContent));
+  const button=Array.from(preview.querySelectorAll(".preview-head button"))
+    .find((el)=>/lightbox/i.test(el.textContent));
   if(button)button.textContent=workspacePreviewLightbox?"Close lightbox":"Lightbox";
-  const expand=$("#preview-expand")||document.querySelector("#workspace-preview .preview-head button:last-child");
+  const expand=preview.querySelector(".preview-head button:last-child");
   if(expand)expand.textContent=workspacePreviewExpanded?"Collapse":"Expand";
 }
 
