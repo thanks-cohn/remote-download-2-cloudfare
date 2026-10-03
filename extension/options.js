@@ -744,21 +744,24 @@ function renderUploadLocationBuilder(){
   if(!uploadLocationSegments.length)uploadLocationSegments=[""];
 
   uploadLocationSegments.forEach((segment,index)=>{
-    const level=document.createElement("div");
-    level.className="upload-builder-level";
+    const row=document.createElement("div");
+    row.className="upload-path-row";
+    row.style.setProperty("--depth",String(index));
 
-    const levelLabel=document.createElement("div");
-    levelLabel.className="upload-builder-level-label";
-    levelLabel.textContent="Level "+(index+1);
+    const pathLine=document.createElement("div");
+    pathLine.className="upload-path-connector";
+    pathLine.setAttribute("aria-hidden","true");
 
-    const chooseRow=document.createElement("div");
-    chooseRow.className="upload-builder-row";
     const select=document.createElement("select");
+    select.className="upload-path-select";
     const blank=document.createElement("option");
     blank.value="";
-    blank.textContent=index===0?"Choose existing folder…":"Choose existing child…";
+    blank.textContent=index===0?"Choose a top-level location…":"Choose an existing child…";
     select.append(blank);
-    const parent=uploadLocationSegments.slice(0,index).map((part)=>String(part||"").trim()).filter(Boolean);
+
+    const parent=uploadLocationSegments.slice(0,index)
+      .map((part)=>String(part||"").trim())
+      .filter(Boolean);
     for(const child of uploadBuilderChildren(parent)){
       const option=document.createElement("option");
       option.value=child;
@@ -766,30 +769,34 @@ function renderUploadLocationBuilder(){
       option.selected=child===segment;
       select.append(option);
     }
-    const remove=document.createElement("button");
-    remove.type="button";
-    remove.className="mini danger upload-builder-remove";
-    remove.textContent="×";
-    remove.title="Remove this level from the upload destination only. This never deletes the R2 folder.";
 
-    const createRow=document.createElement("div");
-    createRow.className="upload-builder-row create";
     const input=document.createElement("input");
     input.type="text";
-    input.value=segment||"";
-    input.placeholder=index===0?"Create a new folder…":"Create a new child…";
+    input.className="upload-path-input";
+    input.value=index===0?"":(segment||"");
+    input.placeholder="Or create a new child…";
+    input.hidden=index===0;
+
     const add=document.createElement("button");
     add.type="button";
-    add.className="mini";
-    add.textContent="+ Child";
-    add.title="Add another folder level";
+    add.className="mini upload-path-add";
+    add.textContent="+";
+    add.title="Continue one level deeper";
+    add.setAttribute("aria-label","Add child level");
+
+    const remove=document.createElement("button");
+    remove.type="button";
+    remove.className="mini danger upload-path-remove";
+    remove.textContent="×";
+    remove.title="Remove this level from the upload path only. Nothing is deleted from R2.";
+    remove.hidden=index===0;
 
     select.addEventListener("change",async()=>{
       if(!select.value)return;
       uploadLocationSegments[index]=select.value;
       uploadLocationSegments=uploadLocationSegments.slice(0,index+1);
       syncUploadBuilderPrefix();
-      if(uploadLocationSegments.length===index+1)uploadLocationSegments.push("");
+      if(index>0)await materializeUploadBuilderPrefix();
       renderUploadLocationBuilder();
     });
 
@@ -804,36 +811,41 @@ function renderUploadLocationBuilder(){
     });
     input.addEventListener("blur",async()=>{
       uploadLocationSegments[index]=String(input.value||"").replace(/[\\/\0]/g,"").trim();
-      await materializeUploadBuilderPrefix();
+      if(uploadLocationSegments[index])await materializeUploadBuilderPrefix();
     });
 
     add.addEventListener("click",async()=>{
-      uploadLocationSegments[index]=String(input.value||select.value||uploadLocationSegments[index]||"").replace(/[\\/\0]/g,"").trim();
-      if(!uploadLocationSegments[index]){
+      const current=index===0
+        ? String(select.value||uploadLocationSegments[index]||"").trim()
+        : String(input.value||select.value||uploadLocationSegments[index]||"").replace(/[\\/\0]/g,"").trim();
+
+      if(!current){
         const hint=$("local-location-hint");
-        if(hint)hint.textContent="Choose or create this level before adding a child.";
+        if(hint)hint.textContent=index===0
+          ?"Choose a top-level location first."
+          :"Choose an existing child or type a new one first.";
         return;
       }
+
+      uploadLocationSegments[index]=current;
       await materializeUploadBuilderPrefix();
       uploadLocationSegments=uploadLocationSegments.slice(0,index+1);
       uploadLocationSegments.push("");
       renderUploadLocationBuilder();
-      root.lastElementChild?.querySelector("input")?.focus();
+      root.lastElementChild?.querySelector(".upload-path-input")?.focus();
     });
 
     remove.addEventListener("click",()=>{
-      if(index===0)uploadLocationSegments=[""];
-      else uploadLocationSegments=uploadLocationSegments.slice(0,index);
+      uploadLocationSegments=uploadLocationSegments.slice(0,index);
+      if(!uploadLocationSegments.length)uploadLocationSegments=[""];
       syncUploadBuilderPrefix();
       const hint=$("local-location-hint");
       if(hint)hint.textContent="Removed from this upload path only. Nothing in R2 was deleted.";
       renderUploadLocationBuilder();
     });
 
-    chooseRow.append(select,remove);
-    createRow.append(input,add);
-    level.append(levelLabel,chooseRow,createRow);
-    root.append(level);
+    row.append(pathLine,select,input,add,remove);
+    root.append(row);
   });
 }
 async function loadUploadLocations({ preserve = true } = {}) {
