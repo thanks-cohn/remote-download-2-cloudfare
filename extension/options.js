@@ -1888,32 +1888,76 @@ async function browseWorkspace({ append = false } = {}) {
     renderFileItems();
     return;
   }
+
   if (!append) {
     root.innerHTML =
-      '<div class="file-empty"><span class="operation-spinner"></span><strong>Loading folder…</strong>Fetching objects from Cloudflare R2</div>';
+      '<div class="file-empty"><span class="operation-spinner"></span><strong>Preparing bucket…</strong>Verifying Cloudflare access</div>';
     $("explorer-status").textContent = "";
     explorerRawObjects = [];
     explorerNextCursor = "";
     explorerVisibleLimit = EXPLORER_RENDER_LIMIT;
   }
-  const result = await send({
-    type: "cfObjects",
-    accountId: workspaceTarget.accountId,
-    bucketName: workspaceTarget.bucketName,
-    prefix: workspacePrefix,
-    cursor: append ? explorerNextCursor : "",
-  });
+
+  let result=null;
+  let lastError=null;
+  const maxAttempts=7;
+
+  for(let attempt=0;attempt<maxAttempts;attempt++){
+    result = await send({
+      type: "cfObjects",
+      accountId: workspaceTarget.accountId,
+      bucketName: workspaceTarget.bucketName,
+      prefix: workspacePrefix,
+      cursor: append ? explorerNextCursor : "",
+    });
+
+    if(result?.ok)break;
+
+    lastError=new Error(result?.error||"Cloudflare access is still propagating");
+
+    if(!isTransientBucketAccessError(lastError))break;
+
+    if(!append){
+      root.innerHTML =
+        '<div class="file-empty"><span class="operation-spinner"></span><strong>Preparing bucket…</strong>Waiting for Cloudflare propagation and verifying access. This can take a minute or two.</div>';
+      $("explorer-status").textContent="";
+    }
+
+    // Ask REDOWN to validate/repair the bucket while keeping transient
+    // 401/403 states out of the user-facing error surface.
+    try{
+      await ensurePrepared(workspaceTarget);
+    }catch(error){
+      lastError=error;
+      if(!isTransientBucketAccessError(error))break;
+    }
+
+    if(attempt<maxAttempts-1)
+      await new Promise((resolve)=>setTimeout(resolve,20000));
+  }
+
   if (!result?.ok) {
     if (!append) explorerItems = [];
-    $("explorer-status").textContent = friendlyError(
-      new Error(result?.error || ""),
-      "load this folder",
-    );
+    if(isTransientBucketAccessError(lastError)){
+      if(!append){
+        root.innerHTML =
+          '<div class="file-empty"><strong>Still preparing this bucket</strong>Cloudflare has not finished propagating access yet. Try Refresh in a moment.</div>';
+      }
+      $("explorer-status").textContent =
+        "REDOWN is still waiting for Cloudflare to finish preparing this bucket.";
+    }else{
+      $("explorer-status").textContent = friendlyError(
+        lastError || new Error(result?.error || ""),
+        "load this folder",
+      );
+    }
   } else {
     explorerRawObjects.push(...(result.objects || []));
     explorerNextCursor = result.cursor || "";
     explorerItems = buildDirectoryItems(explorerRawObjects, workspacePrefix);
+    $("explorer-status").textContent="";
   }
+
   if (!append) explorerSelected.clear();
   renderFileItems();
   renderExplorerChrome();
