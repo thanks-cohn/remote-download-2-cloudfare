@@ -8,6 +8,8 @@ let workspacePreviewExpanded=false;
 let workspacePreviewLightbox=false;
 let workspacePreviewRequestId=0;
 const defaultLocationPrefixCache=new Map();
+let uploadLocationPrefixes=[];
+let uploadLocationSegments=[""];
 
 function uid(){return crypto.randomUUID();}
 function setStatus(id,msg,kind=""){const el=$(id);el.textContent=msg||"";el.className="status"+(kind?" "+kind:"");}
@@ -640,21 +642,156 @@ function chooseBestUploadLocation(query) {
     if (hint) hint.textContent = "Matched " + (best.value ? "/" + best.value : "/ (bucket root)");
   }
 }
+function uploadBuilderChildren(parentSegments){
+  const parent=parentSegments.filter(Boolean);
+  const seen=new Set();
+  for(const raw of uploadLocationPrefixes){
+    const parts=String(raw||"").split("/").filter(Boolean);
+    let matches=true;
+    for(let i=0;i<parent.length;i++){
+      if(parts[i]!==parent[i]){matches=false;break;}
+    }
+    if(!matches)continue;
+    const child=parts[parent.length];
+    if(child)seen.add(child);
+  }
+  return Array.from(seen).sort((a,b)=>a.localeCompare(b,undefined,{numeric:true,sensitivity:"base"}));
+}
+function syncUploadBuilderPrefix(){
+  const prefix=uploadLocationSegments.map((part)=>String(part||"").trim().replace(/^\/+|\/+$/g,"")).filter(Boolean).join("/");
+  ensureUploadLocationOption(prefix);
+  const hint=$("local-location-hint");
+  if(hint)hint.textContent=prefix?"Upload destination: /"+prefix:"Upload destination: / (bucket root)";
+  return prefix;
+}
+async function materializeUploadBuilderPrefix(){
+  const profile=uploadProfile();
+  const prefix=syncUploadBuilderPrefix();
+  if(!profile||!prefix)return;
+  try{
+    await ensureProfileMenuPrefixes(profile,[prefix]);
+    if(!uploadLocationPrefixes.includes(prefix))uploadLocationPrefixes.push(prefix);
+  }catch(error){
+    const hint=$("local-location-hint");
+    if(hint)hint.textContent="Destination saved. REDOWN will create it when Cloudflare access is ready.";
+  }
+}
+function renderUploadLocationBuilder(){
+  const root=$("local-location-builder");
+  if(!root)return;
+  root.replaceChildren();
+  if(!uploadLocationSegments.length)uploadLocationSegments=[""];
+
+  uploadLocationSegments.forEach((segment,index)=>{
+    const level=document.createElement("div");
+    level.className="upload-builder-level";
+
+    const levelLabel=document.createElement("div");
+    levelLabel.className="upload-builder-level-label";
+    levelLabel.textContent="Level "+(index+1);
+
+    const chooseRow=document.createElement("div");
+    chooseRow.className="upload-builder-row";
+    const select=document.createElement("select");
+    const blank=document.createElement("option");
+    blank.value="";
+    blank.textContent=index===0?"Choose existing folder…":"Choose existing child…";
+    select.append(blank);
+    const parent=uploadLocationSegments.slice(0,index).map((part)=>String(part||"").trim()).filter(Boolean);
+    for(const child of uploadBuilderChildren(parent)){
+      const option=document.createElement("option");
+      option.value=child;
+      option.textContent=child;
+      option.selected=child===segment;
+      select.append(option);
+    }
+    const remove=document.createElement("button");
+    remove.type="button";
+    remove.className="mini danger upload-builder-remove";
+    remove.textContent="×";
+    remove.title="Remove this level from the upload destination only. This never deletes the R2 folder.";
+
+    const createRow=document.createElement("div");
+    createRow.className="upload-builder-row create";
+    const input=document.createElement("input");
+    input.type="text";
+    input.value=segment||"";
+    input.placeholder=index===0?"Create a new folder…":"Create a new child…";
+    const add=document.createElement("button");
+    add.type="button";
+    add.className="mini";
+    add.textContent="+ Child";
+    add.title="Add another folder level";
+
+    select.addEventListener("change",async()=>{
+      if(!select.value)return;
+      uploadLocationSegments[index]=select.value;
+      uploadLocationSegments=uploadLocationSegments.slice(0,index+1);
+      syncUploadBuilderPrefix();
+      if(uploadLocationSegments.length===index+1)uploadLocationSegments.push("");
+      renderUploadLocationBuilder();
+    });
+
+    input.addEventListener("input",()=>{
+      uploadLocationSegments[index]=String(input.value||"").replace(/[\\/\0]/g,"").trim();
+      syncUploadBuilderPrefix();
+    });
+    input.addEventListener("change",async()=>{
+      uploadLocationSegments[index]=String(input.value||"").replace(/[\\/\0]/g,"").trim();
+      await materializeUploadBuilderPrefix();
+      renderUploadLocationBuilder();
+    });
+    input.addEventListener("blur",async()=>{
+      uploadLocationSegments[index]=String(input.value||"").replace(/[\\/\0]/g,"").trim();
+      await materializeUploadBuilderPrefix();
+    });
+
+    add.addEventListener("click",async()=>{
+      uploadLocationSegments[index]=String(input.value||select.value||uploadLocationSegments[index]||"").replace(/[\\/\0]/g,"").trim();
+      if(!uploadLocationSegments[index]){
+        const hint=$("local-location-hint");
+        if(hint)hint.textContent="Choose or create this level before adding a child.";
+        return;
+      }
+      await materializeUploadBuilderPrefix();
+      uploadLocationSegments=uploadLocationSegments.slice(0,index+1);
+      uploadLocationSegments.push("");
+      renderUploadLocationBuilder();
+      root.lastElementChild?.querySelector("input")?.focus();
+    });
+
+    remove.addEventListener("click",()=>{
+      if(index===0)uploadLocationSegments=[""];
+      else uploadLocationSegments=uploadLocationSegments.slice(0,index);
+      syncUploadBuilderPrefix();
+      const hint=$("local-location-hint");
+      if(hint)hint.textContent="Removed from this upload path only. Nothing in R2 was deleted.";
+      renderUploadLocationBuilder();
+    });
+
+    chooseRow.append(select,remove);
+    createRow.append(input,add);
+    level.append(levelLabel,chooseRow,createRow);
+    root.append(level);
+  });
+}
 async function loadUploadLocations({ preserve = true } = {}) {
   const profile = uploadProfile();
   const select = $("local-prefix");
-  const search = $("local-location-search");
   const hint = $("local-location-hint");
   if (!select) return;
 
   const previous = preserve ? select.value : "";
   select.replaceChildren();
-  const root = document.createElement("option");
-  root.value = "";
-  root.textContent = "/ (bucket root)";
-  select.append(root);
+  const rootOption = document.createElement("option");
+  rootOption.value = "";
+  rootOption.textContent = "/ (bucket root)";
+  select.append(rootOption);
 
   if (!profile) {
+    uploadLocationPrefixes=[];
+    uploadLocationSegments=[""];
+    renderUploadLocationBuilder();
     if (hint) hint.textContent = "Choose a bucket to load its remote folders.";
     return;
   }
@@ -667,8 +804,13 @@ async function loadUploadLocations({ preserve = true } = {}) {
     limit:5000
   });
 
-  const prefixes = result?.ok ? (result.prefixes || []) : [];
-  for (const prefix of prefixes) {
+  uploadLocationPrefixes = result?.ok ? (result.prefixes || []) : [];
+  for (const value of Object.values(profile.folders || {})) {
+    const clean = String(value || "").replace(/^\/+|\/+$/g, "");
+    if (clean && !uploadLocationPrefixes.includes(clean)) uploadLocationPrefixes.push(clean);
+  }
+
+  for (const prefix of uploadLocationPrefixes) {
     const value = String(prefix || "").replace(/^\/+|\/+$/g, "");
     if (!value || Array.from(select.options).some((option) => option.value === value)) continue;
     const option = document.createElement("option");
@@ -677,24 +819,14 @@ async function loadUploadLocations({ preserve = true } = {}) {
     select.append(option);
   }
 
-  // Saved/common REDOWN prefixes should remain available even in an empty bucket.
-  for (const value of Object.values(profile.folders || {})) {
-    const clean = String(value || "").replace(/^\/+|\/+$/g, "");
-    if (clean && !Array.from(select.options).some((option) => option.value === clean)) {
-      const option = document.createElement("option");
-      option.value = clean;
-      option.textContent = "/" + clean;
-      select.append(option);
-    }
-  }
-
-  if (previous) ensureUploadLocationOption(previous);
-  if (!select.value) select.value = "";
+  const initial = String(previous || "").replace(/^\/+|\/+$/g, "");
+  uploadLocationSegments = initial ? initial.split("/").filter(Boolean) : [""];
+  ensureUploadLocationOption(initial);
+  renderUploadLocationBuilder();
 
   if (hint) hint.textContent = result?.ok
-    ? `${Math.max(0, select.options.length - 1)} remote folder${select.options.length === 2 ? "" : "s"} available`
-    : "Could not load folders yet. The bucket itself is still available.";
-  if (search?.value.trim()) chooseBestUploadLocation(search.value);
+    ? "Choose an existing folder or create a new one. Add Child to continue deeper."
+    : "Existing folders could not be loaded yet, but you can still create a new path.";
 }
 function renderWorkspaceProfiles(){
   const select=$("local-profile");
@@ -1394,8 +1526,12 @@ async function goLocation(accountId, bucketName, prefix = "", remember = true) {
   };
   workspacePrefix = normalizePrefix(prefix);
   explorerArchive = null;
-  if ($("local-prefix"))
-    $("local-prefix").value = workspacePrefix.replace(/\/$/, "");
+  if ($("local-prefix")) {
+    const currentUploadPrefix=workspacePrefix.replace(/\/$/, "");
+    ensureUploadLocationOption(currentUploadPrefix);
+    uploadLocationSegments=currentUploadPrefix?currentUploadPrefix.split("/").filter(Boolean):[""];
+    renderUploadLocationBuilder();
+  }
   const uploadProfile = r2Profiles().find(
     (p) => p.accountId === accountId && p.bucketName === bucketName,
   );
@@ -1601,10 +1737,16 @@ async function loadExplorerInventory() {
     (explorerBuckets.get(stored.accountId) || []).some(
       (b) => b.name === stored.bucketName,
     );
-  if (valid)
+  if (valid) {
     await goLocation(stored.accountId, stored.bucketName, stored.prefix);
-  else {
-    showBucketRows();
+  } else {
+    const preferred = uploadProfile() || r2Profiles()[0];
+    const preferredValid = preferred &&
+      (explorerBuckets.get(preferred.accountId) || []).some((b) => b.name === preferred.bucketName);
+    if (preferredValid)
+      await goLocation(preferred.accountId, preferred.bucketName, "");
+    else
+      showBucketRows();
   }
 }
 async function browseWorkspace({ append = false } = {}) {
@@ -2496,32 +2638,10 @@ function wireWorkspace() {
       uploadLocalFiles(e.dataTransfer?.files);
   }
   const bucketSelect = $("local-profile");
-  const locationSearch = $("local-location-search");
-  const locationSelect = $("local-prefix");
   if (bucketSelect) {
     bucketSelect.onchange = async () => {
-      if (locationSearch) locationSearch.value = "";
+      uploadLocationSegments=[""];
       await loadUploadLocations({ preserve:false });
-    };
-  }
-  if (locationSearch) {
-    locationSearch.oninput = () => chooseBestUploadLocation(locationSearch.value);
-    locationSearch.onkeydown = (e) => {
-      if (e.key === "Enter") {
-        e.preventDefault();
-        chooseBestUploadLocation(locationSearch.value);
-        locationSelect?.focus();
-      }
-      if (e.key === "ArrowDown") {
-        e.preventDefault();
-        locationSelect?.focus();
-      }
-    };
-  }
-  if (locationSelect) {
-    locationSelect.onchange = () => {
-      const hint = $("local-location-hint");
-      if (hint) hint.textContent = "Upload destination: " + (locationSelect.value ? "/" + locationSelect.value : "/ (bucket root)");
     };
   }
 
