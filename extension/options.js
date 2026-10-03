@@ -5,6 +5,9 @@ let currentAccountId="";
 let workspaceTarget=null;
 let workspaceObjects=[];
 let workspacePreviewExpanded=false;
+let workspacePreviewLightbox=false;
+let workspacePreviewRequestId=0;
+const defaultLocationPrefixCache=new Map();
 
 function uid(){return crypto.randomUUID();}
 function setStatus(id,msg,kind=""){const el=$(id);el.textContent=msg||"";el.className="status"+(kind?" "+kind:"");}
@@ -33,6 +36,33 @@ function removeNode(nodes,id){
   for(const node of nodes||[]) if(removeNode(node.children,id)) return true;
   return false;
 }
+async function ensureProfileMenuPrefixes(profile, prefixes) {
+  if (profile?.type !== "cloudflare-r2") return;
+  const clean = Array.from(new Set((prefixes || [])
+    .map((value) => String(value || "").trim().replace(/^\/+|\/+$/g, ""))
+    .filter(Boolean)));
+  if (!clean.length) return;
+  const result = await send({
+    type:"cfEnsurePrefixes",
+    accountId:profile.accountId,
+    bucketName:profile.bucketName,
+    accountName:profile.accountName,
+    prefixes:clean
+  });
+  if (!result?.ok) throw new Error(result?.error || "Could not create remote folder");
+}
+function leafMenuPrefixes(nodes) {
+  const out = [];
+  const walk = (items) => {
+    for (const node of items || []) {
+      if (node.children?.length) walk(node.children);
+      else if (node.prefix != null) out.push(node.prefix);
+    }
+  };
+  walk(nodes);
+  return out;
+}
+
 function renderTree(profile){
   const wrap=document.createElement("div");
   wrap.className="tree-editor";
@@ -45,8 +75,8 @@ function renderTree(profile){
   const small=document.createElement("div");
   small.className="meta";
   small.textContent=(profile.menuTree?.length)
-    ?"Nested menu: each leaf sends to its own saved location."
-    :"Quick send: clicking this preset immediately uses its default location.";
+    ?"Nested menu: each leaf sends to its exact saved location."
+    :"Quick send: clicking this preset immediately uses the free-form default location above.";
   copy.append(strong,small);
 
   const controls=document.createElement("div");
@@ -67,8 +97,10 @@ function renderTree(profile){
       profile.menuTree=[
         {id:uid(),label:"3D",category:"3d",prefix:"3d",path:"assets/3d",children:[]},
         {id:uid(),label:"2D",category:"2d",prefix:"2d",path:"assets/2d",children:[]},
+        {id:uid(),label:"Videos",category:"videos",prefix:"videos",path:"assets/videos",children:[]},
         {id:uid(),label:"Files",category:"files",prefix:"files",path:"assets/files",children:[]}
       ];
+      ensureProfileMenuPrefixes(profile, leafMenuPrefixes(profile.menuTree)).catch(()=>{});
     }
     scheduleSave();
     renderProfiles();
@@ -81,7 +113,7 @@ function renderTree(profile){
 
   const note=document.createElement("div");
   note.className="tree-note";
-  note.textContent="Add children to any item to create another pop-out level. There is no fixed depth.";
+  note.textContent="3D, 2D, Videos, and Files are starter suggestions only. Rename, remove, or add any destination you want. Each leaf uses its exact path.";
   wrap.append(note);
 
   const treeRoot=document.createElement("div");
@@ -137,13 +169,24 @@ function renderTreeNode(profile,node,depth){
     else node.path=target.value;
     scheduleSave();
   });
+  const materializeTarget=async()=>{
+    if(profile.type!=="cloudflare-r2"||node.children.length)return;
+    try{
+      await saveProfiles();
+      await ensureProfileMenuPrefixes(profile,[node.prefix]);
+    }catch(error){
+      console.warn("REDOWN could not materialize menu prefix:",error?.message||String(error));
+    }
+  };
+  target.addEventListener("change",materializeTarget);
+  target.addEventListener("blur",materializeTarget);
 
   const add=document.createElement("button");
   add.className="mini";
   add.textContent="+ Child";
   add.title="Add another pop-out level";
   add.addEventListener("click",()=>{
-    node.children.push(makeNode("New subsection"));
+    node.children.push(makeNode("New destination"));
     scheduleSave();
     renderProfiles();
   });
@@ -292,20 +335,14 @@ function renderProfiles(){
     const grid=document.createElement("div"); grid.className="grid";
     grid.append(
       field("Menu label",p.menuLabel||p.name||"",v=>p.menuLabel=v),
-      selectField("Default path",[
-        ["3d","3D"],["2d","2D"],["videos","Videos"],["files","Files"]
-      ],p.defaultCategory||"files",v=>p.defaultCategory=v),
+      p.type==="cloudflare-r2"
+        ? defaultLocationField(p)
+        : field("Default path",p.defaultPath||"assets/files",v=>p.defaultPath=v),
       field("Order",String(p.menuOrder??index),v=>p.menuOrder=Number(v)||0,"number")
     );
 
     if(p.type==="cloudflare-r2"){
-      grid.append(
-        field("3D prefix",p.folders?.["3d"]||"3d",v=>(p.folders??={})["3d"]=v),
-        field("2D prefix",p.folders?.["2d"]||"2d",v=>(p.folders??={})["2d"]=v),
-        field("Video prefix",p.folders?.videos||"videos",v=>(p.folders??={}).videos=v),
-        field("Files prefix",p.folders?.files||"files",v=>(p.folders??={}).files=v),
-        assetCorsControl(p)
-      );
+      grid.append(assetCorsControl(p));
     }else{
       grid.append(
         field("Repository",p.repository||"",v=>p.repository=v,"text","owner/repository"),
@@ -338,7 +375,188 @@ function renderProfiles(){
   });
 
   renderWorkspaceProfiles();
+  for (const profile of visibleProfiles) {
+    ensureProfileMenuPrefixes(profile, leafMenuPrefixes(profile.menuTree)).catch(()=>{});
+    if (profile.type==="cloudflare-r2" && profile.defaultPrefix)
+      ensureProfileMenuPrefixes(profile,[profile.defaultPrefix]).catch(()=>{});
+  }
   scheduleSave();
+}
+
+function defaultLocationField(profile){
+  const wrap=document.createElement("div");
+  wrap.className="default-location-builder";
+  const label=document.createElement("label");
+  label.textContent="Default location";
+  const levels=document.createElement("div");
+  levels.className="location-levels";
+  const hint=document.createElement("div");
+  hint.className="meta";
+  hint.textContent="Choose an existing folder or type a new one at any level. × only removes that level from this builder; it never deletes anything from R2.";
+
+  const cacheKey=profile.accountId+":"+profile.bucketName;
+  let segments=String(profile.defaultPrefix ?? profile.folders?.files ?? "")
+    .split("/").filter(Boolean);
+  if(!segments.length) segments=[""];
+
+  const cleanSegment=(value)=>String(value||"")
+    .trim()
+    .replace(/[\\/\0]/g,"")
+    .replace(/^\.+$/,"");
+
+  const allPrefixes=()=>defaultLocationPrefixCache.get(cacheKey)||[];
+
+  const immediateChildren=(parentSegments)=>{
+    const parent=parentSegments.filter(Boolean).join("/");
+    const seen=new Set();
+    for(const raw of allPrefixes()){
+      const parts=String(raw||"").split("/").filter(Boolean);
+      if(parentSegments.filter(Boolean).some((part,index)=>parts[index]!==part)) continue;
+      const child=parts[parentSegments.filter(Boolean).length];
+      if(child) seen.add(child);
+    }
+    return Array.from(seen).sort((a,b)=>a.localeCompare(b,undefined,{numeric:true,sensitivity:"base"}));
+  };
+
+  const currentPrefix=()=>segments.map(cleanSegment).filter(Boolean).join("/");
+
+  const commit=async({materialize=true}={})=>{
+    segments=segments.map(cleanSegment);
+    profile.defaultPrefix=currentPrefix();
+    scheduleSave();
+    if(materialize&&profile.defaultPrefix){
+      try{
+        await saveProfiles();
+        await ensureProfileMenuPrefixes(profile,[profile.defaultPrefix]);
+        hint.textContent="Default location ready: /"+profile.defaultPrefix;
+        const cached=new Set(allPrefixes());
+        cached.add(profile.defaultPrefix);
+        defaultLocationPrefixCache.set(cacheKey,Array.from(cached));
+      }catch(error){
+        hint.textContent="Saved. REDOWN will create this location when Cloudflare access is ready.";
+      }
+    }else if(!profile.defaultPrefix){
+      hint.textContent="Bucket root is the default location. Nothing in R2 was deleted.";
+    }
+  };
+
+  const renderLevels=()=>{
+    levels.replaceChildren();
+    segments.forEach((segment,index)=>{
+      const row=document.createElement("div");
+      row.className="location-level-row";
+
+      const parentSegments=segments.slice(0,index).map(cleanSegment).filter(Boolean);
+      const select=document.createElement("select");
+      select.className="location-level-select";
+      const placeholder=document.createElement("option");
+      placeholder.value="";
+      placeholder.textContent=index===0?"Choose existing folder…":"Choose existing child…";
+      select.append(placeholder);
+
+      for(const child of immediateChildren(parentSegments)){
+        const option=document.createElement("option");
+        option.value=child;
+        option.textContent=child;
+        option.selected=child===cleanSegment(segment);
+        select.append(option);
+      }
+
+      const input=document.createElement("input");
+      input.type="text";
+      input.className="location-level-input";
+      input.value=segment||"";
+      input.placeholder=index===0?"or create a new folder":"or create a new child";
+
+      const add=document.createElement("button");
+      add.type="button";
+      add.className="mini";
+      add.textContent="+ Child";
+      add.title="Add another location level";
+
+      const remove=document.createElement("button");
+      remove.type="button";
+      remove.className="mini danger location-level-remove";
+      remove.textContent="×";
+      remove.title="Remove this level from the builder only. This never deletes the R2 folder.";
+
+      select.addEventListener("change",async()=>{
+        if(!select.value)return;
+        segments[index]=select.value;
+        segments=segments.slice(0,index+1);
+        segments.push("");
+        await commit({materialize:true});
+        renderLevels();
+      });
+
+      input.addEventListener("input",()=>{
+        segments[index]=cleanSegment(input.value);
+        profile.defaultPrefix=currentPrefix();
+        scheduleSave();
+      });
+      input.addEventListener("change",async()=>{
+        segments[index]=cleanSegment(input.value);
+        await commit({materialize:true});
+        renderLevels();
+      });
+      input.addEventListener("blur",async()=>{
+        segments[index]=cleanSegment(input.value);
+        await commit({materialize:true});
+      });
+
+      add.addEventListener("click",async()=>{
+        segments[index]=cleanSegment(input.value||select.value||segments[index]);
+        segments=segments.slice(0,index+1);
+        if(!segments[index]){
+          hint.textContent="Choose or create this level before adding a child.";
+          return;
+        }
+        await commit({materialize:true});
+        segments.push("");
+        renderLevels();
+        levels.lastElementChild?.querySelector("input")?.focus();
+      });
+
+      remove.addEventListener("click",async()=>{
+        if(segments.length===1){
+          segments=[""];
+        }else{
+          segments=segments.slice(0,index);
+          if(!segments.length)segments=[""];
+        }
+        await commit({materialize:false});
+        hint.textContent="Removed from the builder only. Existing R2 folders and files were not changed.";
+        renderLevels();
+      });
+
+      row.append(select,input,add,remove);
+      levels.append(row);
+    });
+  };
+
+  const loadExisting=async()=>{
+    if(defaultLocationPrefixCache.has(cacheKey)){
+      renderLevels();
+      return;
+    }
+    hint.innerHTML='<span class="operation-spinner"></span>Loading existing folders…';
+    const result=await send({
+      type:"cfFolderPrefixes",
+      accountId:profile.accountId,
+      bucketName:profile.bucketName,
+      limit:5000
+    });
+    defaultLocationPrefixCache.set(cacheKey,result?.ok?(result.prefixes||[]):[]);
+    hint.textContent=result?.ok
+      ?"Choose existing folders or create new ones. You can continue to any depth."
+      :"Existing folders could not be loaded yet, but you can still create a new path.";
+    renderLevels();
+  };
+
+  wrap.append(label,levels,hint);
+  renderLevels();
+  loadExisting();
+  return wrap;
 }
 
 function field(labelText,value,onInput,type="text",placeholder=""){
@@ -370,6 +588,114 @@ function publicObjectUrl(profile,key){
   return `${base}/${String(key).split("/").map(encodeURIComponent).join("/")}`;
 }
 function r2Profiles(){return profiles.filter(p=>p.type==="cloudflare-r2");}
+function uploadProfile() {
+  return profiles.find((p) => p.id === $("local-profile")?.value);
+}
+function ensureUploadLocationOption(prefix) {
+  const select = $("local-prefix");
+  if (!select) return;
+  const value = String(prefix || "").replace(/^\/+|\/+$/g, "");
+  if (!Array.from(select.options).some((option) => option.value === value)) {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = value ? "/" + value : "/ (bucket root)";
+    select.append(option);
+  }
+  select.value = value;
+}
+function uploadLocationMatchScore(query, value) {
+  const q = String(query || "").trim().toLocaleLowerCase();
+  const v = String(value || "").toLocaleLowerCase();
+  if (!q) return 0;
+  const leaf = v.split("/").filter(Boolean).pop() || v;
+  if (leaf.startsWith(q)) return 1000 - leaf.length;
+  if (v.startsWith(q)) return 900 - v.length;
+  const leafIndex = leaf.indexOf(q);
+  if (leafIndex >= 0) return 800 - leafIndex * 10 - leaf.length;
+  const pathIndex = v.indexOf(q);
+  if (pathIndex >= 0) return 700 - pathIndex * 10 - v.length;
+
+  // Loose subsequence matching means "alm" can still find "almost".
+  let qi = 0;
+  for (let i = 0; i < v.length && qi < q.length; i++)
+    if (v[i] === q[qi]) qi++;
+  return qi === q.length ? 500 - v.length : -1;
+}
+function chooseBestUploadLocation(query) {
+  const select = $("local-prefix");
+  if (!select) return;
+  const options = Array.from(select.options);
+  if (!query.trim()) return;
+  let best = null, bestScore = -1;
+  for (const option of options) {
+    const score = uploadLocationMatchScore(query, option.value);
+    if (score > bestScore) {
+      best = option;
+      bestScore = score;
+    }
+  }
+  if (best && bestScore >= 0) {
+    select.value = best.value;
+    const hint = $("local-location-hint");
+    if (hint) hint.textContent = "Matched " + (best.value ? "/" + best.value : "/ (bucket root)");
+  }
+}
+async function loadUploadLocations({ preserve = true } = {}) {
+  const profile = uploadProfile();
+  const select = $("local-prefix");
+  const search = $("local-location-search");
+  const hint = $("local-location-hint");
+  if (!select) return;
+
+  const previous = preserve ? select.value : "";
+  select.replaceChildren();
+  const root = document.createElement("option");
+  root.value = "";
+  root.textContent = "/ (bucket root)";
+  select.append(root);
+
+  if (!profile) {
+    if (hint) hint.textContent = "Choose a bucket to load its remote folders.";
+    return;
+  }
+
+  if (hint) hint.innerHTML = '<span class="operation-spinner"></span>Loading remote folders…';
+  const result = await send({
+    type:"cfFolderPrefixes",
+    accountId:profile.accountId,
+    bucketName:profile.bucketName,
+    limit:5000
+  });
+
+  const prefixes = result?.ok ? (result.prefixes || []) : [];
+  for (const prefix of prefixes) {
+    const value = String(prefix || "").replace(/^\/+|\/+$/g, "");
+    if (!value || Array.from(select.options).some((option) => option.value === value)) continue;
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = "/" + value;
+    select.append(option);
+  }
+
+  // Saved/common REDOWN prefixes should remain available even in an empty bucket.
+  for (const value of Object.values(profile.folders || {})) {
+    const clean = String(value || "").replace(/^\/+|\/+$/g, "");
+    if (clean && !Array.from(select.options).some((option) => option.value === clean)) {
+      const option = document.createElement("option");
+      option.value = clean;
+      option.textContent = "/" + clean;
+      select.append(option);
+    }
+  }
+
+  if (previous) ensureUploadLocationOption(previous);
+  if (!select.value) select.value = "";
+
+  if (hint) hint.textContent = result?.ok
+    ? `${Math.max(0, select.options.length - 1)} remote folder${select.options.length === 2 ? "" : "s"} available`
+    : "Could not load folders yet. The bucket itself is still available.";
+  if (search?.value.trim()) chooseBestUploadLocation(search.value);
+}
 function renderWorkspaceProfiles(){
   const select=$("local-profile");
   if(!select)return;
@@ -380,8 +706,10 @@ function renderWorkspaceProfiles(){
     option.value=profile.id;option.textContent=`${displayName(profile)} · ${profile.bucketName}`;select.append(option);
   }
   if(Array.from(select.options).some(o=>o.value===previous))select.value=previous;
+  else if(select.options.length) select.selectedIndex=0;
   const uploadCard=$("local-dropzone")?.closest(".card");
   if(uploadCard)uploadCard.hidden=!select.options.length;
+  loadUploadLocations();
 }
 function categoryFromPrefix(prefix){
   const first=String(prefix||"").split("/").filter(Boolean)[0]?.toLowerCase();
@@ -395,7 +723,7 @@ async function uploadLocalFiles(fileList){
   if(!files.length)return;
   const profile=profiles.find(p=>p.id===$("local-profile").value);
   if(!profile)return setStatus("local-upload-status","Choose an R2 bucket first.","bad");
-  const prefix=$("local-prefix").value.trim();
+  const prefix=String($("local-prefix")?.value || "").trim();
   const status=$("local-upload-status");
   let completed=0;
   for(const file of files){
@@ -490,6 +818,7 @@ function appendDetails(root,obj,key,url,type){
   root.append(link);
 }
 async function showWorkspacePreview(obj,row,urlOverride=""){
+  const requestId=++workspacePreviewRequestId;
   const root=$("workspace-preview");
   root.replaceChildren();
   document.querySelectorAll("#workspace-objects .object.active").forEach(el=>el.classList.remove("active"));
@@ -498,20 +827,40 @@ async function showWorkspacePreview(obj,row,urlOverride=""){
   let previewProfile=r2Profiles().find(p=>p.accountId===workspaceTarget?.accountId&&p.bucketName===workspaceTarget?.bucketName);
   if(!previewProfile){
     const preparing=document.createElement("div");preparing.className="meta";preparing.innerHTML='<span class="operation-spinner"></span>Preparing preview…';root.append(preparing);
-    try{previewProfile=await ensurePrepared(workspaceTarget);}catch(error){preparing.textContent=friendlyError(error,"prepare the preview");return;}
+    try{previewProfile=await ensurePrepared(workspaceTarget);}catch(error){if(requestId!==workspacePreviewRequestId)return;preparing.textContent=friendlyError(error,"prepare the preview");return;}
+    if(requestId!==workspacePreviewRequestId)return;
     root.replaceChildren();
   }
   let url=urlOverride;
   if(!url){
-    const privateRead=await send({type:"cfPrivateObjectUrl",...explorerSource(),key,ttl:900});
+    let privateRead=await send({type:"cfPrivateObjectUrl",...explorerSource(),key,ttl:900});
+    if(requestId!==workspacePreviewRequestId)return;
+    if(!privateRead?.ok && isTransientBucketAccessError(new Error(privateRead?.error||""))){
+      root.innerHTML='<div class="meta"><span class="operation-spinner"></span>Preparing bucket… Verifying Cloudflare access…</div>';
+      try{
+        await ensurePrepared(workspaceTarget);
+        if(requestId!==workspacePreviewRequestId)return;
+        privateRead=await send({type:"cfPrivateObjectUrl",...explorerSource(),key,ttl:900});
+        if(requestId!==workspacePreviewRequestId)return;
+      }catch(error){
+        root.textContent=friendlyError(error,"open this preview");
+        return;
+      }
+    }
     if(!privateRead?.ok){root.textContent=friendlyError(new Error(privateRead?.error||""),"open this preview");return;}
     url=privateRead.url;
   }
+  if(requestId!==workspacePreviewRequestId)return;
   const type=objectContentType(obj,key);
   const head=document.createElement("div");head.className="preview-head";
   const title=document.createElement("div");title.className="preview-title";title.textContent=key;
+  const controls=document.createElement("div");controls.className="preview-nav";
+  const previous=document.createElement("button");previous.className="ghost preview-arrow";previous.type="button";previous.setAttribute("aria-label","Previous file");previous.title="Previous file";previous.textContent="←";previous.addEventListener("click",()=>navigatePreview(-1));
+  const next=document.createElement("button");next.className="ghost preview-arrow";next.type="button";next.setAttribute("aria-label","Next file");next.title="Next file";next.textContent="→";next.addEventListener("click",()=>navigatePreview(1));
+  const lightbox=document.createElement("button");lightbox.className="ghost";lightbox.type="button";lightbox.textContent=workspacePreviewLightbox?"Close lightbox":"Lightbox";lightbox.addEventListener("click",()=>setWorkspacePreviewLightbox(!workspacePreviewLightbox));
   const expand=document.createElement("button");expand.className="ghost";expand.type="button";expand.textContent=workspacePreviewExpanded?"Collapse":"Expand";expand.addEventListener("click",()=>setWorkspacePreviewExpanded(!workspacePreviewExpanded));
-  head.append(title,expand);root.append(head);
+  controls.append(previous,next,lightbox,expand);
+  head.append(title,controls);root.append(head);
 
   const media=document.createElement("div");
   media.className="preview-media";
@@ -544,8 +893,10 @@ async function showWorkspacePreview(obj,row,urlOverride=""){
     root.append(pre);
     try{
       const response=await fetch(url,{headers:{range:"bytes=0-524287"}});
+      if(requestId!==workspacePreviewRequestId)return;
       if(!response.ok&&!([200,206].includes(response.status)))throw new Error(`HTTP ${response.status}`);
       const text=await response.text();
+      if(requestId!==workspacePreviewRequestId)return;
       pre.textContent=text+(text.length>=524288?"\n\n[Preview truncated at 512 KB]":"");
     }catch(error){
       pre.textContent=`Could not load text preview: ${error?.message||String(error)}`;
@@ -572,11 +923,45 @@ async function showWorkspacePreview(obj,row,urlOverride=""){
 
 function setWorkspacePreviewExpanded(expanded){
   workspacePreviewExpanded=Boolean(expanded);
+  if (workspacePreviewExpanded && workspacePreviewLightbox)
+    setWorkspacePreviewLightbox(false);
   const grid=document.querySelector(".explorer-body");
   grid?.classList.toggle("expanded",workspacePreviewExpanded);
-  const button=$("#preview-expand")||document.querySelector("#workspace-preview .preview-head button");
+  if (workspacePreviewExpanded) $("explorer")?.focus?.({ preventScroll:true });
+  const button=$("#preview-expand")||document.querySelector("#workspace-preview .preview-head button:last-child");
   if(button)button.textContent=workspacePreviewExpanded?"Collapse":"Expand";
 }
+function setWorkspacePreviewLightbox(enabled){
+  workspacePreviewLightbox=Boolean(enabled);
+  if (workspacePreviewLightbox && workspacePreviewExpanded) {
+    workspacePreviewExpanded=false;
+    document.querySelector(".explorer-body")?.classList.remove("expanded");
+  }
+
+  const preview=$("#workspace-preview");
+  preview?.classList.toggle("lightbox",workspacePreviewLightbox);
+  document.body.classList.toggle("preview-lightbox-open",workspacePreviewLightbox);
+
+  let backdrop=document.querySelector(".preview-lightbox-backdrop");
+  if (workspacePreviewLightbox) {
+    if (!backdrop) {
+      backdrop=document.createElement("div");
+      backdrop.className="preview-lightbox-backdrop";
+      backdrop.setAttribute("aria-hidden","true");
+      backdrop.addEventListener("click",()=>setWorkspacePreviewLightbox(false));
+      document.body.append(backdrop);
+    }
+    $("explorer")?.focus?.({ preventScroll:true });
+  } else {
+    backdrop?.remove();
+  }
+
+  const button=$("#preview-lightbox")||Array.from(document.querySelectorAll("#workspace-preview .preview-head button")).find((el)=>/lightbox/i.test(el.textContent));
+  if(button)button.textContent=workspacePreviewLightbox?"Close lightbox":"Lightbox";
+  const expand=$("#preview-expand")||document.querySelector("#workspace-preview .preview-head button:last-child");
+  if(expand)expand.textContent=workspacePreviewExpanded?"Collapse":"Expand";
+}
+
 
 let explorerAccounts = [];
 let explorerBuckets = new Map();
@@ -593,6 +978,9 @@ let explorerSort = { field: "name", direction: 1 };
 let explorerOperation = null;
 let explorerArchive = null;
 let explorerBucketAccountId = "";
+let explorerSearchActive = false;
+let explorerSearchRequestId = 0;
+let explorerSearchTimer = null;
 let explorerPreparing = new Map();
 const EXPLORER_RENDER_LIMIT = 400;
 let explorerVisibleLimit = EXPLORER_RENDER_LIMIT;
@@ -749,26 +1137,118 @@ function buildDirectoryItems(objects, prefix) {
   return [...folders.values(), ...files];
 }
 function sortedVisibleItems() {
-  const query = $("workspace-search")?.value.trim().toLocaleLowerCase() || "";
-  return explorerItems
-    .filter((x) => !query || x.name.toLocaleLowerCase().includes(query))
-    .sort((a, b) => {
-      if (a.folder !== b.folder) return a.folder ? -1 : 1;
-      let av = a[explorerSort.field],
-        bv = b[explorerSort.field];
-      if (explorerSort.field === "modified") {
-        av = av?.getTime() || 0;
-        bv = bv?.getTime() || 0;
-      }
-      if (typeof av === "number") return (av - bv) * explorerSort.direction;
-      return (
-        String(av || "").localeCompare(String(bv || ""), undefined, {
-          numeric: true,
-          sensitivity: "base",
-        }) * explorerSort.direction
-      );
-    });
+  if (explorerSearchActive) return explorerItems.slice();
+  return explorerItems.slice().sort((a, b) => {
+    if (a.folder !== b.folder) return a.folder ? -1 : 1;
+    let av = a[explorerSort.field],
+      bv = b[explorerSort.field];
+    if (explorerSort.field === "modified") {
+      av = av?.getTime() || 0;
+      bv = bv?.getTime() || 0;
+    }
+    if (typeof av === "number") return (av - bv) * explorerSort.direction;
+    return (
+      String(av || "").localeCompare(String(bv || ""), undefined, {
+        numeric: true,
+        sensitivity: "base",
+      }) * explorerSort.direction
+    );
+  });
 }
+function explorerSearchTargets() {
+  if (workspaceTarget) {
+    return [{
+      accountId:workspaceTarget.accountId,
+      accountName:accountName(workspaceTarget.accountId),
+      bucketName:workspaceTarget.bucketName
+    }];
+  }
+  const accounts = explorerBucketAccountId && explorerBucketAccountId !== "__all__"
+    ? explorerAccounts.filter((account)=>account.id===explorerBucketAccountId)
+    : explorerAccounts;
+  return accounts.flatMap((account)=>
+    (explorerBuckets.get(account.id)||[]).map((bucket)=>({
+      accountId:account.id,
+      accountName:account.name||account.id,
+      bucketName:bucket.name
+    }))
+  );
+}
+async function runExplorerSearch(query) {
+  const q=String(query||"").trim();
+  const requestId=++explorerSearchRequestId;
+  if(!q){
+    explorerSearchActive=false;
+    $("explorer-status").textContent="";
+    if(workspaceTarget) return browseWorkspace();
+    return showBucketRows(explorerBucketAccountId==="__all__"?"":explorerBucketAccountId);
+  }
+
+  explorerSearchActive=true;
+  explorerSelected.clear();
+  explorerAnchor=-1;
+  explorerNextCursor="";
+  explorerVisibleLimit=EXPLORER_RENDER_LIMIT;
+  const root=$("workspace-objects");
+  root.innerHTML='<div class="file-empty"><span class="operation-spinner"></span><strong>Searching remote paths…</strong>Matching files and folders across this location.</div>';
+
+  const result=await send({
+    type:"cfSearchObjects",
+    targets:explorerSearchTargets(),
+    query:q,
+    limit:200
+  });
+  if(requestId!==explorerSearchRequestId)return;
+  if(!result?.ok){
+    explorerItems=[];
+    $("explorer-status").textContent=friendlyError(new Error(result?.error||""),"search remote files");
+    return renderFileItems();
+  }
+
+  explorerItems=(result.results||[]).map((entry)=>{
+    const key=String(entry.key||"");
+    const object=entry.object||{};
+    const basename=key.replace(/\/$/,"").split("/").pop()||key;
+    const parent=key.replace(/\/$/,"").split("/").slice(0,-1).join("/");
+    return {
+      id:"search:"+entry.accountId+":"+entry.bucketName+":"+key,
+      name:basename,
+      key,
+      folder:Boolean(entry.folder),
+      kind:entry.folder?"folder":fileKind(key,String(object?.httpMetadata?.contentType||object?.contentType||"")),
+      type:(entry.accountName?entry.accountName+" · ":"")+entry.bucketName+(parent?" · /"+parent:""),
+      size:entry.folder?0:Number(object.size||0),
+      modified:itemDate(object),
+      object,
+      searchResult:true,
+      accountId:entry.accountId,
+      accountName:entry.accountName||accountName(entry.accountId),
+      bucketName:entry.bucketName
+    };
+  });
+  $("explorer-status").textContent=explorerItems.length
+    ? `Found ${explorerItems.length} remote match${explorerItems.length===1?"":"es"} for “${q}”.`
+    : `No remote files or folders matched “${q}”.`;
+  renderFileItems();
+}
+function scheduleExplorerSearch() {
+  clearTimeout(explorerSearchTimer);
+  explorerSearchTimer=setTimeout(()=>runExplorerSearch($("workspace-search")?.value||""),220);
+}
+async function goToSearchResult(item) {
+  if(!item?.searchResult)return;
+  const query=$("workspace-search");
+  if(query)query.value="";
+  explorerSearchActive=false;
+  explorerSearchRequestId++;
+  const clean=item.key.replace(/\/$/,"");
+  const parent=clean.split("/").slice(0,-1).join("/");
+  await goLocation(item.accountId,item.bucketName,parent);
+  const targetId=item.folder?"folder:"+item.key:"file:"+item.key;
+  const real=explorerItems.find((entry)=>entry.id===targetId||entry.key===item.key);
+  if(real) await selectSingleExplorerItem(real,{focus:true});
+}
+
 function setOperation(
   type,
   message,
@@ -815,10 +1295,14 @@ function finishOperation(message, error = false) {
     }
   }, 6000);
 }
+function isTransientBucketAccessError(error) {
+  const raw = error?.message || String(error || "");
+  return /unauthorized|\b401\b|\b403\b|worker.*(not ready|unreachable)|propagat|reachability|dns/i.test(raw);
+}
 function friendlyError(error, action = "complete that action") {
   const raw = error?.message || String(error);
-  if (/unauthorized|401|403/i.test(raw))
-    return "REDOWN could not access this bucket yet.";
+  if (isTransientBucketAccessError(error))
+    return "Preparing bucket… REDOWN is still verifying Cloudflare access.";
   if (/not found|404/i.test(raw)) return "The item is no longer available.";
   return `Could not ${action}.`;
 }
@@ -827,15 +1311,18 @@ async function refreshProfiles() {
   renderWorkspaceProfiles();
 }
 async function ensurePrepared(target = workspaceTarget) {
-  const existing = r2Profiles().find(
-    (p) =>
-      p.accountId === target.accountId && p.bucketName === target.bucketName,
-  );
-  if (existing) return existing;
+  if (!target?.accountId || !target?.bucketName)
+    throw new Error("Choose a bucket first.");
+
   const id = `${target.accountId}:${target.bucketName}`;
   if (explorerPreparing.has(id)) return explorerPreparing.get(id);
+
   const task = (async () => {
-    setOperation("prepare", "Preparing this bucket for file operations…");
+    setOperation(
+      "prepare",
+      "Preparing bucket… Verifying Cloudflare access…",
+    );
+
     let lastError;
     for (let attempt = 0; attempt < 10; attempt++) {
       const result = await send({
@@ -844,23 +1331,37 @@ async function ensurePrepared(target = workspaceTarget) {
         bucketName: target.bucketName,
         accountName: accountName(target.accountId),
       });
+
       if (result?.ok) {
         await refreshProfiles();
         finishOperation("Bucket ready");
         return result.profile;
       }
+
       lastError = new Error(
-        result?.error || "Bucket preparation is still propagating",
+        result?.error || "Cloudflare access is still propagating",
       );
+
+      // Temporary Worker/auth propagation is a readiness state, not a user-facing error.
       explorerOperation.message =
-        "Verifying Cloudflare access… Cloudflare may take a few minutes; REDOWN will keep checking.";
+        "Preparing bucket… Verifying Cloudflare access. This can take a few minutes.";
+      explorerOperation.state = "running";
       renderOperation();
+
+      // Clearly non-transient errors should still fail promptly.
+      if (!isTransientBucketAccessError(lastError)) break;
+
       if (attempt < 9)
         await new Promise((resolve) => setTimeout(resolve, 30000));
     }
-    finishOperation("REDOWN could not prepare this bucket yet.", true);
+
+    finishOperation(
+      "REDOWN could not finish preparing this bucket yet. Try again in a moment.",
+      true,
+    );
     throw lastError;
   })().finally(() => explorerPreparing.delete(id));
+
   explorerPreparing.set(id, task);
   return task;
 }
@@ -878,6 +1379,8 @@ function rememberLocation() {
   updateNavButtons();
 }
 async function goLocation(accountId, bucketName, prefix = "", remember = true) {
+  explorerSearchActive = false;
+  explorerSearchRequestId++;
   explorerBucketAccountId = "";
   const bucket = (explorerBuckets.get(accountId) || []).find(
     (b) => b.name === bucketName,
@@ -896,8 +1399,11 @@ async function goLocation(accountId, bucketName, prefix = "", remember = true) {
   const uploadProfile = r2Profiles().find(
     (p) => p.accountId === accountId && p.bucketName === bucketName,
   );
-  if (uploadProfile && $("local-profile"))
+  if (uploadProfile && $("local-profile")) {
     $("local-profile").value = uploadProfile.id;
+    await loadUploadLocations({ preserve:false });
+    ensureUploadLocationOption(workspacePrefix.replace(/\/$/, ""));
+  }
   if ($("explorer-location"))
     $("explorer-location").value = `${accountId}|${bucketName}`;
   explorerSelected.clear();
@@ -1028,6 +1534,8 @@ function renderSources() {
   renderExplorerChrome();
 }
 function showBucketRows(accountId = "") {
+  explorerSearchActive = false;
+  explorerSearchRequestId++;
   explorerBucketAccountId = accountId || "__all__";
   workspaceTarget = null;
   workspacePrefix = "";
@@ -1141,11 +1649,13 @@ function renderFileItems() {
   const all = sortedVisibleItems();
   const items = all.slice(0, explorerVisibleLimit);
   const query = $("workspace-search")?.value.trim() || "";
-  if (!workspaceTarget && !items.length)
+  if (explorerSearchActive && !items.length)
+    root.innerHTML = `<div class="file-empty"><strong>No remote matches for “${query}”</strong>Try a filename, folder name, or path fragment.</div>`;
+  else if (!workspaceTarget && !items.length)
     root.innerHTML =
       '<div class="file-empty"><strong>No R2 buckets found</strong>Create a bucket to begin.</div>';
   else if (!items.length)
-    root.innerHTML = `<div class="file-empty"><strong>${explorerItems.length ? `No files match “${query}”` : workspacePrefix ? "This folder is empty." : "This bucket is empty."}</strong>${explorerItems.length ? "Try a different search." : "Drop files here or choose Upload."}</div>`;
+    root.innerHTML = `<div class="file-empty"><strong>${workspacePrefix ? "This folder is empty." : "This bucket is empty."}</strong>Drop files here or choose Upload.</div>`;
   items.forEach((item, index) => root.append(createFileRow(item, index)));
   if (all.length > items.length || explorerNextCursor) {
     const more = document.createElement("button");
@@ -1182,11 +1692,13 @@ function renderFileItems() {
   };
   const selected = selectedExplorerItems();
   const bytes = selected.reduce((sum, item) => sum + (item.size || 0), 0);
-  $("explorer-count").textContent = workspaceTarget
-    ? `${all.length}${explorerNextCursor ? "+" : ""} item${all.length === 1 ? "" : "s"}`
-    : explorerBucketAccountId
-      ? `${all.length} bucket${all.length === 1 ? "" : "s"}`
-      : "No location selected";
+  $("explorer-count").textContent = explorerSearchActive
+    ? `${all.length} search result${all.length === 1 ? "" : "s"}`
+    : workspaceTarget
+      ? `${all.length}${explorerNextCursor ? "+" : ""} item${all.length === 1 ? "" : "s"}`
+      : explorerBucketAccountId
+        ? `${all.length} bucket${all.length === 1 ? "" : "s"}`
+        : "No location selected";
   $("explorer-selection").textContent = selected.length
     ? `${selected.length} selected${bytes ? ` · ${formatBytes(bytes)}` : ""}`
     : "";
@@ -1218,14 +1730,20 @@ function createFileRow(item, index) {
   type.textContent = item.type;
   row.append(name, size, modified, type);
   row.onclick = (e) => {
+    if (item.searchResult) return goToSearchResult(item);
     if (item.kind === "bucket") return goLocation(item.accountId, item.bucketName);
     selectExplorerItem(item, index, e);
   };
   row.ondblclick = () => {
+    if (item.searchResult) return goToSearchResult(item);
     if (item.kind === "bucket") return goLocation(item.accountId, item.bucketName);
     openExplorerItem(item);
   };
   row.oncontextmenu = (e) => {
+    if(item.searchResult){
+      e.preventDefault();
+      return goToSearchResult(item);
+    }
     e.preventDefault();
     if (!explorerSelected.has(item.id)) {
       explorerSelected = new Set([item.id]);
@@ -1270,6 +1788,59 @@ function createFileRow(item, index) {
   row.ontouchend = row.ontouchmove = () => clearTimeout(timer);
   return row;
 }
+function previewableExplorerItems() {
+  return sortedVisibleItems().filter(
+    (item) => item.kind !== "bucket" && !item.folder,
+  );
+}
+async function previewExplorerItem(item) {
+  if (!item || item.kind === "bucket") return;
+  if (item.folder) {
+    const root = $("workspace-preview");
+    root.replaceChildren();
+    const head=document.createElement("div");head.className="preview-head";
+    const title=document.createElement("div");title.className="preview-title";title.textContent=item.name;
+    const controls=document.createElement("div");controls.className="preview-nav";
+    const lightbox=document.createElement("button");lightbox.className="ghost";lightbox.type="button";lightbox.textContent=workspacePreviewLightbox?"Close lightbox":"Lightbox";lightbox.addEventListener("click",()=>setWorkspacePreviewLightbox(!workspacePreviewLightbox));
+    const expand=document.createElement("button");expand.className="ghost";expand.type="button";expand.textContent=workspacePreviewExpanded?"Collapse":"Expand";expand.addEventListener("click",()=>setWorkspacePreviewExpanded(!workspacePreviewExpanded));
+    controls.append(lightbox,expand);head.append(title,controls);
+    const note=document.createElement("div");note.className="preview-folder";note.innerHTML=iconSvg("folder")+"<strong>Folder</strong><span>Press Enter to open this folder.</span>";
+    root.append(head,note);
+    return;
+  }
+  if (item.archiveEntry) return previewArchiveEntry(item);
+  return showWorkspacePreview(item.object || { key:item.key, size:item.size }, rootRow(item.id));
+}
+async function selectSingleExplorerItem(item, { focus = false, scroll = true } = {}) {
+  if (!item || item.kind === "bucket") return;
+  explorerSelected = new Set([item.id]);
+  const items = sortedVisibleItems();
+  explorerAnchor = Math.max(0, items.findIndex((entry) => entry.id === item.id));
+  renderFileItems();
+  const row = rootRow(item.id);
+  if (scroll) row?.scrollIntoView({ block:"nearest" });
+  if (focus) row?.focus({ preventScroll:true });
+  await previewExplorerItem(item);
+}
+async function navigateExplorerSelection(delta) {
+  const items = sortedVisibleItems().filter((item) => item.kind !== "bucket");
+  if (!items.length) return;
+  const selected = selectedExplorerItems()[0];
+  let index = selected ? items.findIndex((item) => item.id === selected.id) : -1;
+  if (index < 0) index = delta > 0 ? -1 : 0;
+  index = Math.max(0, Math.min(items.length - 1, index + delta));
+  await selectSingleExplorerItem(items[index], { focus:true });
+}
+async function navigatePreview(delta) {
+  const items = previewableExplorerItems();
+  if (!items.length) return;
+  const selected = selectedExplorerItems()[0];
+  let index = selected ? items.findIndex((item) => item.id === selected.id) : -1;
+  if (index < 0) index = delta > 0 ? -1 : 0;
+  index = (index + delta + items.length) % items.length;
+  await selectSingleExplorerItem(items[index], { focus:false });
+}
+
 function selectExplorerItem(item, index, event = {}) {
   const items = sortedVisibleItems();
   if (event.shiftKey && explorerAnchor >= 0) {
@@ -1286,8 +1857,8 @@ function selectExplorerItem(item, index, event = {}) {
     explorerAnchor = index;
   }
   renderFileItems();
-  if (!item.folder && explorerSelected.size === 1)
-    showWorkspacePreview(item.object, rootRow(item.id));
+  if (explorerSelected.size === 1)
+    previewExplorerItem(item);
 }
 function rootRow(id) {
   return Array.from(
@@ -1680,7 +2251,8 @@ async function explorerUploadFiles(files, prefix = workspacePrefix) {
   const profile = await ensurePrepared(workspaceTarget);
   await refreshProfiles();
   $("local-profile").value = profile.id;
-  $("local-prefix").value = normalizePrefix(prefix).replace(/\/$/, "");
+  await loadUploadLocations({ preserve:false });
+  ensureUploadLocationOption(normalizePrefix(prefix).replace(/\/$/, ""));
   await uploadLocalFiles(files);
 }
 function handleLocalDrop(event, prefix) {
@@ -1907,7 +2479,7 @@ function wireWorkspace() {
       }
     };
     picker.onchange = async () => {
-      await explorerUploadFiles(picker.files);
+      await uploadLocalFiles(picker.files);
       picker.value = "";
     };
     for (const n of ["dragenter", "dragover"])
@@ -1921,15 +2493,62 @@ function wireWorkspace() {
         drop.classList.remove("drag");
       });
     drop.ondrop = (e) =>
-      explorerUploadFiles(e.dataTransfer?.files, workspacePrefix);
+      uploadLocalFiles(e.dataTransfer?.files);
   }
+  const bucketSelect = $("local-profile");
+  const locationSearch = $("local-location-search");
+  const locationSelect = $("local-prefix");
+  if (bucketSelect) {
+    bucketSelect.onchange = async () => {
+      if (locationSearch) locationSearch.value = "";
+      await loadUploadLocations({ preserve:false });
+    };
+  }
+  if (locationSearch) {
+    locationSearch.oninput = () => chooseBestUploadLocation(locationSearch.value);
+    locationSearch.onkeydown = (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        chooseBestUploadLocation(locationSearch.value);
+        locationSelect?.focus();
+      }
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        locationSelect?.focus();
+      }
+    };
+  }
+  if (locationSelect) {
+    locationSelect.onchange = () => {
+      const hint = $("local-location-hint");
+      if (hint) hint.textContent = "Upload destination: " + (locationSelect.value ? "/" + locationSelect.value : "/ (bucket root)");
+    };
+  }
+
   $("workspace-refresh").onclick = () => workspaceTarget ? browseWorkspace() : loadExplorerInventory();
-  $("workspace-search").oninput = renderFileItems;
+  $("workspace-search").oninput = scheduleExplorerSearch;
+  $("workspace-search").onkeydown = (e) => {
+    if(e.key==="Enter" && explorerSearchActive && explorerItems.length){
+      e.preventDefault();
+      goToSearchResult(explorerItems[0]);
+    }
+  };
   $("preview-expand")?.addEventListener("click", () =>
     setWorkspacePreviewExpanded(!workspacePreviewExpanded),
   );
+  $("preview-lightbox")?.addEventListener("click", () =>
+    setWorkspacePreviewLightbox(!workspacePreviewLightbox),
+  );
   $("explorer-new-folder").onclick = () => workspaceTarget && beginNewFolder();
-  $("explorer-upload").onclick = () => workspaceTarget && picker.click();
+  $("explorer-upload").onclick = async () => {
+    if (!workspaceTarget) return;
+    const profile = await ensurePrepared(workspaceTarget);
+    await refreshProfiles();
+    $("local-profile").value = profile.id;
+    await loadUploadLocations({ preserve:false });
+    ensureUploadLocationOption(workspacePrefix.replace(/\/$/, ""));
+    picker.click();
+  };
   $("properties-close").onclick = () => $("explorer-properties").close();
   $("explorer-back").onclick = () => navigateHistory(-1);
   $("explorer-forward").onclick = () => navigateHistory(1);
@@ -1987,12 +2606,33 @@ function wireWorkspace() {
     } else if (e.key === "Delete") {
       e.preventDefault();
       deleteSelection();
-    } else if (e.key === "Enter" && selected.length === 1)
+    } else if (e.key === "Enter" && selected.length === 1) {
+      e.preventDefault();
       openExplorerItem(selected[0]);
-    else if (e.key === "Escape") {
+    } else if (!e.altKey && !command && e.key === "ArrowDown") {
+      e.preventDefault();
+      navigateExplorerSelection(1);
+    } else if (!e.altKey && !command && e.key === "ArrowUp") {
+      e.preventDefault();
+      navigateExplorerSelection(-1);
+    } else if (!e.altKey && !command && e.key === "ArrowRight") {
+      e.preventDefault();
+      navigatePreview(1);
+    } else if (!e.altKey && !command && e.key === "ArrowLeft") {
+      e.preventDefault();
+      navigatePreview(-1);
+    } else if (e.key === "Escape") {
       hideExplorerMenu();
-      explorerSelected.clear();
-      renderFileItems();
+      if (workspacePreviewLightbox) {
+        e.preventDefault();
+        setWorkspacePreviewLightbox(false);
+      } else if (workspacePreviewExpanded) {
+        e.preventDefault();
+        setWorkspacePreviewExpanded(false);
+      } else {
+        explorerSelected.clear();
+        renderFileItems();
+      }
     } else if (e.key === "Backspace" || (e.altKey && e.key === "ArrowLeft")) {
       e.preventDefault();
       navigateHistory(-1);
