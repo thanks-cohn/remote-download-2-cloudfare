@@ -5,6 +5,8 @@ import { webcrypto } from 'node:crypto';
 import test from 'node:test';
 
 const source = await readFile(new URL('../extension/background.js', import.meta.url), 'utf8');
+const authSource = await readFile(new URL('../extension/cloudflare-auth.js', import.meta.url), 'utf8');
+const optionsSource = await readFile(new URL('../extension/options.js', import.meta.url), 'utf8');
 function event() {
   const listeners = [];
   return { listeners, addListener(fn) { listeners.push(fn); } };
@@ -12,6 +14,14 @@ function event() {
 function harness(shared = {}) {
   const session = shared.session || {}, local = shared.local || {}, windows = shared.windows || new Map();
   const calls = [], alarms = new Map();
+  let navigationReady;
+  const navigated = new Promise(resolve => { navigationReady = resolve; });
+  const lockQueues = shared.lockQueues || new Map();
+  const locks = { request(name, task) {
+    const result = (lockQueues.get(name) || Promise.resolve()).catch(() => {}).then(task);
+    lockQueues.set(name, result.catch(() => {}));
+    return result;
+  } };
   const storage = values => ({
     async get(key) { return { [key]: structuredClone(values[key]) }; },
     async set(patch) { Object.assign(values, structuredClone(patch)); },
@@ -19,7 +29,7 @@ function harness(shared = {}) {
   });
   const chrome = {
     identity: { getRedirectURL(path = '') { return `https://testid.chromiumapp.org/${path}`; } },
-    runtime: { onInstalled:event(), onStartup:event(), onMessage:event() },
+    runtime: { onInstalled:event(), onStartup:event(), onMessage:event(), sendMessage() { throw new Error("background unavailable"); } },
     storage: { session:storage(session), local:storage(local), onChanged:event() },
     contextMenus: { onClicked:event() },
     windows: {
@@ -35,7 +45,7 @@ function harness(shared = {}) {
       },
       async remove(id) { calls.push(['remove', id]); windows.delete(id); }
     },
-    tabs: { async update(id, options) { calls.push(['navigate', id, options]); } },
+    tabs: { async update(id, options) { calls.push(['navigate', id, options]); navigationReady(); } },
     alarms: {
       onAlarm:event(), async create(name, details) { alarms.set(name, details); },
       async clear(name) { alarms.delete(name); }
@@ -49,20 +59,38 @@ function harness(shared = {}) {
   };
   const timers = [];
   const context = vm.createContext({
-    chrome, crypto:webcrypto, TextEncoder, Uint8Array, URL, URLSearchParams, Headers,
+    chrome, navigator:{locks}, crypto:webcrypto, TextEncoder, Uint8Array, URL, URLSearchParams, Headers,
     AbortController, btoa, console,
     setTimeout(fn, ms) { const timer = {fn, ms}; timers.push(timer); return timer; },
     clearTimeout(timer) { const i = timers.indexOf(timer); if (i >= 0) timers.splice(i, 1); },
     fetch(...args) { return fetchImpl(...args); }
   });
-  vm.runInContext(source, context);
+  context.importScripts = path => {
+    assert.equal(path, 'cloudflare-auth.js');
+    vm.runInContext(authSource, context);
+  };
+  if (shared.withoutBackground) vm.runInContext(authSource, context);
+  else vm.runInContext(source, context);
   return {
-    session, local, windows, chrome, calls, alarms, timers,
+    session, local, windows, chrome, calls, alarms, timers, lockQueues, navigated,
+    settings() {
+      const button = {disabled:false, textContent:'Connect Cloudflare', addEventListener(_type, fn) { this.click = fn; }};
+      const statuses = [];
+      Object.assign(context, {
+        $() { return button; }, setStatus(_id, text) { statuses.push(text); },
+        send() { throw new Error('settings must not send login messages'); },
+        async refreshCloudflare() {}, safeUiMessage(value) { return value; }
+      });
+      const begin = optionsSource.indexOf('async function loginRequest(');
+      const end = optionsSource.indexOf('$("disconnect-cloudflare").addEventListener', begin);
+      vm.runInContext(optionsSource.slice(begin, end), context);
+      return {button, statuses};
+    },
     run(code) { return vm.runInContext(code, context); },
     fetch(fn) { fetchImpl = fn; },
     callback(patch = {}) {
       const attempt = session.cloudflareLogin;
-      return context.completeCloudflareLogin({tabId:attempt.tabId, frameId:0,
+      return chrome.webNavigation.onBeforeNavigate.listeners[0]({tabId:attempt.tabId, frameId:0,
         url:`${attempt.redirectUri}?state=${attempt.state}&code=code`, ...patch});
     }
   };
@@ -84,7 +112,7 @@ test('click creates a visible window before network navigation; repeated clicks 
   assert.equal(h.calls.some(c => c[0] === 'fetch'), false);
   await h.run('connectCloudflare()');
   assert.equal(h.calls.at(-1)[0], 'focus');
-  const status = await h.run('cloudflareLoginStatus()');
+  const status = await h.run('RedownCloudflareAuth.status()');
   assert.equal(status.verifier, undefined);
   assert.equal(status.state, undefined);
 });
@@ -158,7 +186,7 @@ test('closed popup releases attempt and stale window is replaced on next click',
   assert.notEqual(h.session.cloudflareLogin.id, id);
   const listener = h.chrome.windows.onRemoved.listeners[0];
   listener(10);
-  for (let i = 0; i < 10; i++) await Promise.resolve();
+  for (let i = 0; i < 60; i++) await Promise.resolve();
   assert.equal(h.session.cloudflareLogin.phase, 'failed');
   assert.match(h.session.cloudflareLogin.error, /closed/);
 });
@@ -166,7 +194,7 @@ test('closed popup releases attempt and stale window is replaced on next click',
 test('expired attempt clears secrets, closes popup, and permits retry', async () => {
   const h = harness(); await h.run('connectCloudflare()');
   h.session.cloudflareLogin.expiresAt = Date.now() - 1;
-  await h.run('expireCloudflareLogin()');
+  await h.run('RedownCloudflareAuth.status()');
   assert.equal(h.session.cloudflareLogin.phase, 'failed');
   assert.match(h.session.cloudflareLogin.error, /timed out/);
   assert.equal(h.session.cloudflareLogin.verifier, undefined);
@@ -194,7 +222,7 @@ test('verification network stall aborts and releases the attempt', async () => {
   const h = harness(); await h.run('connectCloudflare()');
   h.fetch((_url, {signal}) => new Promise((_, reject) => signal.addEventListener('abort', () => reject(new Error('aborted')))));
   const complete = h.callback();
-  for (let i = 0; i < 15; i++) await Promise.resolve();
+  for (let i = 0; i < 80; i++) await Promise.resolve();
   const timer = h.timers.find(t => t.ms === 30000); assert.ok(timer); timer.fn();
   await complete;
   assert.equal(h.session.cloudflareLogin.phase, 'failed');
@@ -207,4 +235,42 @@ test('popup creation errors are returned instead of leaving an in-flight lock', 
   await assert.rejects(h.run('connectCloudflare()'), /window unavailable/);
   await assert.rejects(h.run('connectCloudflare()'), /window unavailable/);
   assert.equal(h.calls.filter(c => c[0] === 'create').length, 2);
+});
+
+
+test('settings opens and completes Cloudflare login with no background worker or messaging', {timeout:2000}, async () => {
+  const h = harness({withoutBackground:true});
+  const {button, statuses} = h.settings();
+  const click = button.click();
+  for (let i = 0; i < 100; i++) await Promise.resolve();
+  await h.navigated;
+  for (let i = 0; i < 100; i++) await Promise.resolve();
+  assert.equal(h.calls[0][0], 'create');
+  assert.equal(h.calls.some(c => c[0] === 'navigate'), true);
+  assert.equal(button.disabled, true);
+  await h.callback();
+  const poll = h.timers.find(t => t.ms === 1000); assert.ok(poll); poll.fn();
+  await click;
+  assert.equal(h.local.cloudflareAuth.accessToken, 'verified-token');
+  assert.equal(button.disabled, false);
+  assert.equal(button.textContent, 'Connect Cloudflare');
+  assert.ok(statuses.includes('Cloudflare connected.'));
+});
+
+test('settings and worker observing the same callback exchange the code once across contexts', async () => {
+  const worker = harness();
+  const settings = harness({...worker, withoutBackground:true});
+  await settings.run('RedownCloudflareAuth.connect()');
+  await Promise.all([worker.callback(), settings.callback()]);
+  const exchanges = [...worker.calls, ...settings.calls].filter(c => c[0] === 'fetch' && c[1].endsWith('/oauth2/token'));
+  assert.equal(exchanges.length, 1);
+  assert.equal(worker.session.cloudflareLogin.phase, 'connected');
+});
+
+test('two settings contexts share one visible sign-in window', async () => {
+  const a = harness({withoutBackground:true});
+  const b = harness({...a, withoutBackground:true});
+  const [first, second] = await Promise.all([a.run('RedownCloudflareAuth.connect()'), b.run('RedownCloudflareAuth.connect()')]);
+  assert.equal(first.attemptId, second.attemptId);
+  assert.equal([...a.calls, ...b.calls].filter(c => c[0] === 'create').length, 1);
 });

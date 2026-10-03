@@ -3426,13 +3426,13 @@ async function addBucketPreset(bucketName){
   setStatus("cf-status",`${bucketName} is ready. REDOWN verified a real R2 write and prepared its default locations. Right-click a link, image, video, audio item, or GLB link → REDOWN → ${bucketName}.`,"ok");
 }
 
-async function loginRequest(message) {
+async function loginRequest(operation) {
   let timer;
   try {
     return await Promise.race([
-      send(message),
+      Promise.resolve().then(operation),
       new Promise((_, reject) => {
-        timer = setTimeout(() => reject(new Error("REDOWN's login service did not respond. Click Connect Cloudflare to retry.")), 15000);
+        timer = setTimeout(() => reject(new Error("Chrome did not finish opening Cloudflare. Click Connect Cloudflare to retry.")), 15000);
       })
     ]);
   } finally { clearTimeout(timer); }
@@ -3440,7 +3440,7 @@ async function loginRequest(message) {
 async function waitForCloudflareLogin(attemptId) {
   const deadline = Date.now() + 6 * 60 * 1000;
   while (Date.now() < deadline) {
-    const status = await loginRequest({ type:"cfLoginStatus" });
+    const status = {ok:true, ...(await loginRequest(() => RedownCloudflareAuth.status()))};
     if (!status?.ok) throw new Error(status?.error || "Could not check Cloudflare sign-in. Try again.");
     if (status.attemptId !== attemptId) throw new Error("The sign-in attempt changed. Click Connect Cloudflare to try again.");
     if (status.phase === "connected") return;
@@ -3452,7 +3452,7 @@ async function waitForCloudflareLogin(attemptId) {
       : "Cloudflare sign-in is open in a separate window. Complete sign-in there.");
     await new Promise(resolve => setTimeout(resolve, 1000));
   }
-  await loginRequest({ type:"cfLoginCancel", attemptId }).catch(() => {});
+  await loginRequest(() => RedownCloudflareAuth.cancel(attemptId)).catch(() => {});
   throw new Error("Cloudflare sign-in timed out. Click Connect Cloudflare to try again.");
 }
 $("connect-cloudflare").addEventListener("click",async()=>{
@@ -3463,7 +3463,7 @@ $("connect-cloudflare").addEventListener("click",async()=>{
   button.textContent="Connecting…";
   setStatus("hero-status","Opening Cloudflare…");
   try{
-    const result=await loginRequest({type:"cfConnect"});
+    const result={ok:true, ...(await loginRequest(() => RedownCloudflareAuth.connect()))};
     if(!result?.ok)throw new Error(result?.error||"Cloudflare connection failed");
     if(result.pending)await waitForCloudflareLogin(result.attemptId);
     setStatus("hero-status","Cloudflare connected.","ok");
