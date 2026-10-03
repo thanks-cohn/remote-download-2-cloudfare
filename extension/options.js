@@ -46,8 +46,8 @@ async function ensureProfileMenuPrefixes(profile, prefixes) {
   if (!clean.length) return;
   const result = await send({
     type:"cfEnsurePrefixes",
-    accountId:profile.accountId,
-    bucketName:profile.bucketName,
+    accountId:target.accountId,
+    bucketName:target.bucketName,
     accountName:profile.accountName,
     prefixes:clean
   });
@@ -627,8 +627,32 @@ function publicObjectUrl(profile,key){
   return `${base}/${String(key).split("/").map(encodeURIComponent).join("/")}`;
 }
 function r2Profiles(){return profiles.filter(p=>p.type==="cloudflare-r2");}
+function uploadTarget() {
+  const select=$("local-profile");
+  const option=select?.selectedOptions?.[0];
+  if(!option)return null;
+  const accountId=option.dataset.accountId||"";
+  const bucketName=option.dataset.bucketName||"";
+  if(accountId&&bucketName){
+    const account=explorerAccounts.find((item)=>item.id===accountId);
+    return {accountId,bucketName,accountName:account?.name||accountId};
+  }
+  const profile=profiles.find((p)=>p.id===select.value);
+  return profile ? {accountId:profile.accountId,bucketName:profile.bucketName,accountName:profile.accountName||profile.name||profile.accountId} : null;
+}
 function uploadProfile() {
-  return profiles.find((p) => p.id === $("local-profile")?.value);
+  const target=uploadTarget();
+  if(!target)return null;
+  return r2Profiles().find((p)=>p.accountId===target.accountId&&p.bucketName===target.bucketName)||null;
+}
+async function ensureUploadProfile() {
+  const target=uploadTarget();
+  if(!target)throw new Error("Choose an R2 bucket first.");
+  let profile=uploadProfile();
+  if(profile)return profile;
+  profile=await ensurePrepared(target);
+  await refreshProfiles();
+  return r2Profiles().find((p)=>p.accountId===target.accountId&&p.bucketName===target.bucketName)||profile;
 }
 function ensureUploadLocationOption(prefix) {
   const select = $("local-prefix");
@@ -702,10 +726,10 @@ function syncUploadBuilderPrefix(){
   return prefix;
 }
 async function materializeUploadBuilderPrefix(){
-  const profile=uploadProfile();
   const prefix=syncUploadBuilderPrefix();
-  if(!profile||!prefix)return;
+  if(!prefix)return;
   try{
+    const profile=await ensureUploadProfile();
     await ensureProfileMenuPrefixes(profile,[prefix]);
     if(!uploadLocationPrefixes.includes(prefix))uploadLocationPrefixes.push(prefix);
   }catch(error){
@@ -813,6 +837,7 @@ function renderUploadLocationBuilder(){
   });
 }
 async function loadUploadLocations({ preserve = true } = {}) {
+  const target = uploadTarget();
   const profile = uploadProfile();
   const select = $("local-prefix");
   const hint = $("local-location-hint");
@@ -825,7 +850,7 @@ async function loadUploadLocations({ preserve = true } = {}) {
   rootOption.textContent = "/ (bucket root)";
   select.append(rootOption);
 
-  if (!profile) {
+  if (!target) {
     uploadLocationPrefixes=[];
     uploadLocationSegments=[""];
     renderUploadLocationBuilder();
@@ -842,7 +867,7 @@ async function loadUploadLocations({ preserve = true } = {}) {
   });
 
   uploadLocationPrefixes = result?.ok ? (result.prefixes || []) : [];
-  for (const value of Object.values(profile.folders || {})) {
+  for (const value of Object.values(profile?.folders || {})) {
     const clean = String(value || "").replace(/^\/+|\/+$/g, "");
     if (clean && !uploadLocationPrefixes.includes(clean)) uploadLocationPrefixes.push(clean);
   }
@@ -868,17 +893,42 @@ async function loadUploadLocations({ preserve = true } = {}) {
 function renderWorkspaceProfiles(){
   const select=$("local-profile");
   if(!select)return;
-  const previous=select.value;
+  const previousAccount=select.selectedOptions?.[0]?.dataset.accountId||"";
+  const previousBucket=select.selectedOptions?.[0]?.dataset.bucketName||"";
+  const previousValue=select.value;
   select.replaceChildren();
-  for(const profile of r2Profiles()){
-    const option=document.createElement("option");
-    option.value=profile.id;option.textContent=`${displayName(profile)} · ${profile.bucketName}`;select.append(option);
+
+  let count=0;
+  for(const account of explorerAccounts){
+    for(const bucket of explorerBuckets.get(account.id)||[]){
+      const option=document.createElement("option");
+      option.value="bucket:"+account.id+":"+bucket.name;
+      option.dataset.accountId=account.id;
+      option.dataset.bucketName=bucket.name;
+      option.textContent=(account.name||account.id)+" · "+bucket.name;
+      if(account.id===previousAccount&&bucket.name===previousBucket)option.selected=true;
+      select.append(option);
+      count++;
+    }
   }
-  if(Array.from(select.options).some(o=>o.value===previous))select.value=previous;
-  else if(select.options.length) select.selectedIndex=0;
+
+  // Before Explorer inventory is available, keep configured R2 buckets usable.
+  if(!count){
+    for(const profile of r2Profiles()){
+      const option=document.createElement("option");
+      option.value=profile.id;
+      option.dataset.accountId=profile.accountId||"";
+      option.dataset.bucketName=profile.bucketName||"";
+      option.textContent=`${displayName(profile)} · ${profile.bucketName}`;
+      option.selected=profile.id===previousValue;
+      select.append(option);
+    }
+  }
+
+  if(!select.selectedOptions.length&&select.options.length)select.selectedIndex=0;
   const uploadCard=$("local-dropzone")?.closest(".card");
   if(uploadCard)uploadCard.hidden=!select.options.length;
-  loadUploadLocations();
+  loadUploadLocations({preserve:true});
 }
 function categoryFromPrefix(prefix){
   const first=String(prefix||"").split("/").filter(Boolean)[0]?.toLowerCase();
@@ -890,8 +940,9 @@ function categoryFromPrefix(prefix){
 async function uploadLocalFiles(fileList){
   const files=Array.from(fileList||[]);
   if(!files.length)return;
-  const profile=profiles.find(p=>p.id===$("local-profile").value);
-  if(!profile)return setStatus("local-upload-status","Choose an R2 bucket first.","bad");
+  let profile;
+  try{profile=await ensureUploadProfile();}
+  catch(error){return setStatus("local-upload-status",error?.message||"Choose an R2 bucket first.","bad");}
   const prefix=String($("local-prefix")?.value || "").trim();
   const status=$("local-upload-status");
   let completed=0;
@@ -1569,13 +1620,16 @@ async function goLocation(accountId, bucketName, prefix = "", remember = true) {
     uploadLocationSegments=currentUploadPrefix?currentUploadPrefix.split("/").filter(Boolean):[""];
     renderUploadLocationBuilder();
   }
-  const uploadProfile = r2Profiles().find(
-    (p) => p.accountId === accountId && p.bucketName === bucketName,
-  );
-  if (uploadProfile && $("local-profile")) {
-    $("local-profile").value = uploadProfile.id;
-    await loadUploadLocations({ preserve:false });
-    ensureUploadLocationOption(workspacePrefix.replace(/\/$/, ""));
+  const localProfileSelect=$("local-profile");
+  if(localProfileSelect){
+    const matching=Array.from(localProfileSelect.options).find((option)=>
+      option.dataset.accountId===accountId&&option.dataset.bucketName===bucketName
+    );
+    if(matching){
+      localProfileSelect.value=matching.value;
+      await loadUploadLocations({preserve:false});
+      ensureUploadLocationOption(workspacePrefix.replace(/\/$/,""));
+    }
   }
   if ($("explorer-location"))
     $("explorer-location").value = `${accountId}|${bucketName}`;
@@ -1758,6 +1812,7 @@ async function loadExplorerInventory() {
     }),
   );
   renderSources();
+  renderWorkspaceProfiles();
   if (
     workspaceTarget &&
     (explorerBuckets.get(workspaceTarget.accountId) || []).some(
@@ -2701,7 +2756,11 @@ function wireWorkspace() {
     if (!workspaceTarget) return;
     const profile = await ensurePrepared(workspaceTarget);
     await refreshProfiles();
-    $("local-profile").value = profile.id;
+    const uploadSelect=$("local-profile");
+    const matching=Array.from(uploadSelect.options).find((option)=>
+      option.dataset.accountId===workspaceTarget.accountId&&option.dataset.bucketName===workspaceTarget.bucketName
+    );
+    if(matching)uploadSelect.value=matching.value;
     await loadUploadLocations({ preserve:false });
     ensureUploadLocationOption(workspacePrefix.replace(/\/$/, ""));
     picker.click();
