@@ -1238,16 +1238,28 @@ function publicAssetUrl(profile, key) {
   return `${base}/${String(key).split("/").map(encodeURIComponent).join("/")}`;
 }
 
-async function listObjectsPage(accountId, bucketName, prefix = "", cursor = "") {
+async function listObjectsPage(accountId, bucketName, prefix = "", cursor = "", delimiter = "") {
   const params = new URLSearchParams({ per_page:"1000" });
   if (prefix) params.set("prefix", prefix);
   if (cursor) params.set("cursor", cursor);
+  if (delimiter) params.set("delimiter", delimiter);
   const res = await cfFetch(`/accounts/${accountId}/r2/buckets/${encodeURIComponent(bucketName)}/objects?${params}`);
   const body = await res.json().catch(() => ({}));
   if (!res.ok || body.success === false) throw new Error(cloudflareErrorMessage(body, `Could not list bucket objects (${res.status})`));
   const result = body.result ?? body;
   const objects = Array.isArray(result?.objects) ? result.objects : (Array.isArray(result) ? result : []);
-  return { objects, cursor:result?.cursor || body?.result_info?.cursor || "", truncated:Boolean(result?.truncated) };
+  const info=body?.result_info || {};
+  const delimited = Array.isArray(result?.delimited)
+    ? result.delimited
+    : Array.isArray(info?.delimited)
+      ? info.delimited
+      : [];
+  return {
+    objects,
+    delimited,
+    cursor:result?.cursor || info?.cursor || "",
+    truncated:Boolean(result?.truncated ?? info?.is_truncated)
+  };
 }
 async function listObjects(accountId, bucketName, prefix = "", cursor = "") {
   return listObjectsPage(accountId, bucketName, prefix, cursor);
@@ -1354,6 +1366,34 @@ async function listFolderPrefixes(accountId, bucketName, limit = 5000) {
   return Array.from(prefixes).sort((a, b) =>
     a.localeCompare(b, undefined, { numeric:true, sensitivity:"base" })
   );
+}
+async function listFolderChildren(accountId, bucketName, parentPrefix = "", limit = 250) {
+  const parent = cleanExplorerPrefix(parentPrefix || "");
+  const children = new Set();
+  let cursor = "";
+  for (let page = 0; page < 20 && children.size < limit; page++) {
+    const result = await listObjectsPage(accountId, bucketName, parent, cursor, "/");
+    for (const raw of result.delimited || []) {
+      const full=String(raw||"").replace(/\/$/,"");
+      if(!full)continue;
+      const relative=parent && full.startsWith(parent) ? full.slice(parent.length) : full;
+      const child=relative.split("/").filter(Boolean)[0];
+      if(child)children.add(child);
+      if(children.size>=limit)break;
+    }
+    // Folder marker objects can appear as ordinary objects at this level.
+    for (const object of result.objects || []) {
+      const key=String(object.key||object.name||"");
+      if(!key||!key.startsWith(parent))continue;
+      const relative=key.slice(parent.length);
+      const slash=relative.indexOf("/");
+      if(slash>0)children.add(relative.slice(0,slash));
+      if(children.size>=limit)break;
+    }
+    if(!result.cursor||result.cursor===cursor)break;
+    cursor=result.cursor;
+  }
+  return Array.from(children).sort((a,b)=>a.localeCompare(b,undefined,{numeric:true,sensitivity:"base"}));
 }
 function cleanExplorerPrefix(value) {
   const parts = String(value || "").split("/").filter(Boolean);
@@ -1847,6 +1887,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       }
       if (message?.type === "cfObjects") return sendResponse({ ok:true, ...(await listObjects(message.accountId,message.bucketName,message.prefix,message.cursor)) });
       if (message?.type === "cfFolderPrefixes") return sendResponse({ ok:true, prefixes:await listFolderPrefixes(message.accountId,message.bucketName,message.limit || 5000) });
+      if (message?.type === "cfFolderChildren") return sendResponse({
+        ok:true,
+        children:await listFolderChildren(message.accountId,message.bucketName,message.parentPrefix || "",message.limit || 250)
+      });
       if (message?.type === "cfSearchObjects") return sendResponse({ ok:true, results:await searchExplorerObjects(message.targets || [], message.query, message.limit || 200) });
       if (message?.type === "cfPrepareBucket") return sendResponse({ ok:true, profile:await preparedProfile(message.accountId,message.bucketName,message.accountName) });
       if (message?.type === "cfTransferObjects") return sendResponse({ ok:true, ...(await transferExplorerObjects(message)) });
