@@ -1055,6 +1055,10 @@ async function showWorkspacePreview(obj,row,urlOverride=""){
   const requestId=++workspacePreviewRequestId;
   const root=$("workspace-preview");
   root.replaceChildren();
+  const loading=document.createElement("div");
+  loading.className="preview-loading";
+  loading.innerHTML='<span class="operation-spinner"></span><strong>Opening preview…</strong><span>Preparing secure remote view</span>';
+  root.append(loading);
   document.querySelectorAll("#workspace-objects .object.active").forEach(el=>el.classList.remove("active"));
   row?.classList.add("active");
   const key=obj.key||obj.name||String(obj);
@@ -1085,6 +1089,7 @@ async function showWorkspacePreview(obj,row,urlOverride=""){
     url=privateRead.url;
   }
   if(requestId!==workspacePreviewRequestId)return;
+  root.replaceChildren();
   const type=objectContentType(obj,key);
   const head=document.createElement("div");head.className="preview-head";
   const title=document.createElement("div");title.className="preview-title";title.textContent=key;
@@ -1510,6 +1515,13 @@ async function goToSearchResult(item) {
   if(real) await selectSingleExplorerItem(real,{focus:true});
 }
 
+function setExplorerBusy(busy,message=""){
+  const explorer=$("explorer");
+  if(!explorer)return;
+  explorer.classList.toggle("busy",Boolean(busy));
+  explorer.setAttribute("aria-busy",busy?"true":"false");
+  if(message&&busy)setOperation("navigate",message);
+}
 function setOperation(
   type,
   message,
@@ -1646,7 +1658,11 @@ async function goLocation(accountId, bucketName, prefix = "", remember = true) {
   const bucket = (explorerBuckets.get(accountId) || []).find(
     (b) => b.name === bucketName,
   );
-  if (!bucket) return;
+  if (!bucket) {
+    finishOperation("That bucket is no longer available.", true);
+    return;
+  }
+
   workspaceTarget = {
     accountId,
     bucketName,
@@ -1655,30 +1671,52 @@ async function goLocation(accountId, bucketName, prefix = "", remember = true) {
   };
   workspacePrefix = normalizePrefix(prefix);
   explorerArchive = null;
-  if ($("local-prefix")) {
-    const currentUploadPrefix=workspacePrefix.replace(/\/$/, "");
-    ensureUploadLocationOption(currentUploadPrefix);
-    uploadLocationSegments=currentUploadPrefix?currentUploadPrefix.split("/").filter(Boolean):[""];
-    renderUploadLocationBuilder();
-  }
-  const localProfileSelect=$("local-profile");
-  if(localProfileSelect){
-    const matching=Array.from(localProfileSelect.options).find((option)=>
-      option.dataset.accountId===accountId&&option.dataset.bucketName===bucketName
-    );
-    if(matching){
-      localProfileSelect.value=matching.value;
-      await loadUploadLocations({preserve:false});
-      ensureUploadLocationOption(workspacePrefix.replace(/\/$/,""));
-    }
-  }
-  if ($("explorer-location"))
-    $("explorer-location").value = `${accountId}|${bucketName}`;
   explorerSelected.clear();
   explorerAnchor = -1;
+
+  if ($("explorer-location"))
+    $("explorer-location").value = `${accountId}|${bucketName}`;
+
   if (remember) rememberLocation();
+
+  // Navigation feedback must happen before any secondary form synchronization.
+  setExplorerBusy(true, workspacePrefix ? "Opening folder…" : "Opening bucket…");
   renderExplorerChrome();
-  await browseWorkspace();
+
+  try {
+    await browseWorkspace();
+  } finally {
+    setExplorerBusy(false);
+  }
+
+  // Keep the separate local-upload form synchronized, but never block Explorer
+  // navigation on its potentially expensive folder-prefix scan.
+  queueMicrotask(async()=>{
+    try{
+      const currentUploadPrefix=workspacePrefix.replace(/\/$/,"");
+      if($("local-prefix")){
+        ensureUploadLocationOption(currentUploadPrefix);
+        uploadLocationSegments=currentUploadPrefix
+          ? currentUploadPrefix.split("/").filter(Boolean)
+          : [""];
+        renderUploadLocationBuilder();
+      }
+
+      const localProfileSelect=$("local-profile");
+      if(localProfileSelect){
+        const matching=Array.from(localProfileSelect.options).find((option)=>
+          option.dataset.accountId===accountId&&option.dataset.bucketName===bucketName
+        );
+        if(matching){
+          localProfileSelect.value=matching.value;
+          await loadUploadLocations({preserve:false});
+          ensureUploadLocationOption(currentUploadPrefix);
+        }
+      }
+    }catch(error){
+      console.warn("REDOWN upload chooser sync failed:",error?.message||String(error));
+    }
+  });
 }
 function updateNavButtons() {
   $("explorer-back").disabled = explorerHistoryIndex <= 0;
@@ -1784,7 +1822,13 @@ function renderSources() {
       const name = document.createElement("span");
       name.textContent = bucket.name;
       button.append(icon, name);
-      button.onclick = () => goLocation(account.id, bucket.name);
+      button.onclick = async () => {
+        if(button.disabled)return;
+        button.disabled=true;
+        button.classList.add("loading");
+        try{await goLocation(account.id,bucket.name);}
+        finally{button.disabled=false;button.classList.remove("loading");}
+      };
       button.ondragover = (e) => e.preventDefault();
       button.ondrop = (e) => dropOnBucket(e, account.id, bucket.name);
       group.append(button);
@@ -2050,12 +2094,18 @@ function createFileRow(item, index) {
   row.append(name, size, modified, type);
   row.onclick = (e) => {
     if (item.searchResult) return goToSearchResult(item);
-    if (item.kind === "bucket") return goLocation(item.accountId, item.bucketName);
+    if (item.kind === "bucket") {
+      setExplorerBusy(true,"Opening bucket…");
+      return goLocation(item.accountId,item.bucketName);
+    }
     selectExplorerItem(item, index, e);
   };
   row.ondblclick = () => {
     if (item.searchResult) return goToSearchResult(item);
-    if (item.kind === "bucket") return goLocation(item.accountId, item.bucketName);
+    if (item.kind === "bucket") {
+      setExplorerBusy(true,"Opening bucket…");
+      return goLocation(item.accountId,item.bucketName);
+    }
     openExplorerItem(item);
   };
   row.oncontextmenu = (e) => {
@@ -2185,16 +2235,38 @@ function rootRow(id) {
   ).find((x) => x.dataset.id === id);
 }
 async function openExplorerItem(item) {
-  if (item.archiveEntry && item.folder) return renderArchiveFolder(item.key);
-  if (item.folder)
-    return goLocation(
-      workspaceTarget.accountId,
-      workspaceTarget.bucketName,
-      item.key,
-    );
-  if (item.kind === "archive" && /\.(zip|cbz)$/i.test(item.key)) return openArchive(item);
-  if (item.archiveEntry) return previewArchiveEntry(item);
-  await showWorkspacePreview(item.object, rootRow(item.id));
+  if(!item)return;
+  setExplorerBusy(true,item.folder?"Opening folder…":"Opening preview…");
+  try{
+    if (item.archiveEntry && item.folder) {
+      renderArchiveFolder(item.key);
+      finishOperation("Folder opened");
+      return;
+    }
+    if (item.folder) {
+      await goLocation(
+        workspaceTarget.accountId,
+        workspaceTarget.bucketName,
+        item.key,
+      );
+      return;
+    }
+    if (item.kind === "archive" && /\.(zip|cbz)$/i.test(item.key)) {
+      await openArchive(item);
+      return;
+    }
+    if (item.archiveEntry) {
+      await previewArchiveEntry(item);
+      finishOperation("Preview ready");
+      return;
+    }
+    await showWorkspacePreview(item.object || {key:item.key,size:item.size}, rootRow(item.id));
+    finishOperation("Preview ready");
+  }catch(error){
+    finishOperation(friendlyError(error,item.folder?"open this folder":"open this preview"),true);
+  }finally{
+    setExplorerBusy(false);
+  }
 }
 async function openArchive(item) {
   setOperation("archive", "Inspecting archive…");
