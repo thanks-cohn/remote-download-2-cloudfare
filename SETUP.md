@@ -19,11 +19,15 @@ Developer mode -> Load unpacked -> extension/
 
 1. Open REDOWN settings.
 2. Select **Connect Cloudflare**.
-3. Authorize the requested R2 and Worker permissions.
+3. A separate Cloudflare sign-in window opens immediately. Sign in and authorize the requested R2 and Worker permissions.
 4. Choose a Cloudflare account.
 5. Choose an existing R2 bucket or create a new one.
 6. Click the bucket to prepare it for REDOWN.
 7. Configure that bucket's right-click preset.
+
+If you close the sign-in window or sign-in takes longer than five minutes, REDOWN restores the Connect button so you can retry. Clicking Connect from another settings tab focuses the current sign-in window instead of opening duplicates. Login progress survives the extension background worker going idle; closing the browser clears the temporary attempt. Network requests during verification time out after 30 seconds.
+
+Version 0.5.8 adds `webNavigation` to capture only the exact OAuth callback from the sign-in tab, and `alarms` to expire stalled attempts. The extension ID, callback URL, scopes, PKCE, and state checks remain unchanged. After updating an unpacked install, reload REDOWN in `chrome://extensions` and reopen settings to load the new permissions and scripts.
 
 REDOWN automatically provisions the per-bucket Worker required for true remote transfer.
 

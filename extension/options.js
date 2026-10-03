@@ -3426,6 +3426,35 @@ async function addBucketPreset(bucketName){
   setStatus("cf-status",`${bucketName} is ready. REDOWN verified a real R2 write and prepared its default locations. Right-click a link, image, video, audio item, or GLB link → REDOWN → ${bucketName}.`,"ok");
 }
 
+async function loginRequest(message) {
+  let timer;
+  try {
+    return await Promise.race([
+      send(message),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error("REDOWN's login service did not respond. Click Connect Cloudflare to retry.")), 15000);
+      })
+    ]);
+  } finally { clearTimeout(timer); }
+}
+async function waitForCloudflareLogin(attemptId) {
+  const deadline = Date.now() + 6 * 60 * 1000;
+  while (Date.now() < deadline) {
+    const status = await loginRequest({ type:"cfLoginStatus" });
+    if (!status?.ok) throw new Error(status?.error || "Could not check Cloudflare sign-in. Try again.");
+    if (status.attemptId !== attemptId) throw new Error("The sign-in attempt changed. Click Connect Cloudflare to try again.");
+    if (status.phase === "connected") return;
+    if (status.phase === "failed" || status.phase === "idle") {
+      throw new Error(status.error || "Cloudflare sign-in did not finish. Try again.");
+    }
+    setStatus("hero-status", status.phase === "verifying"
+      ? "Verifying Cloudflare access…"
+      : "Cloudflare sign-in is open in a separate window. Complete sign-in there.");
+    await new Promise(resolve => setTimeout(resolve, 1000));
+  }
+  await loginRequest({ type:"cfLoginCancel", attemptId }).catch(() => {});
+  throw new Error("Cloudflare sign-in timed out. Click Connect Cloudflare to try again.");
+}
 $("connect-cloudflare").addEventListener("click",async()=>{
   const button=$("connect-cloudflare");
   if(button.disabled)return;
@@ -3434,16 +3463,24 @@ $("connect-cloudflare").addEventListener("click",async()=>{
   button.textContent="Connecting…";
   setStatus("hero-status","Opening Cloudflare…");
   try{
-    const result=await send({type:"cfConnect"});
+    const result=await loginRequest({type:"cfConnect"});
     if(!result?.ok)throw new Error(result?.error||"Cloudflare connection failed");
+    if(result.pending)await waitForCloudflareLogin(result.attemptId);
     setStatus("hero-status","Cloudflare connected.","ok");
-    await refreshCloudflare();
   }catch(error){
-    setStatus("hero-status",error?.message||String(error),"bad");
+    // Auth failures must be actionable, even when Cloudflare's raw error
+    // contains Unauthorized (which Explorer intentionally treats as transient).
+    const message=error?.message||String(error);
+    setStatus("hero-status",/unauthorized|\b401\b|\b403\b/i.test(message)
+      ? "Cloudflare sign-in could not be verified. Click Connect Cloudflare to try again."
+      : message,"bad");
+    return;
   }finally{
     button.disabled=false;
     button.textContent=original;
   }
+  // The login button is already released before loading accounts/buckets.
+  await refreshCloudflare().catch(error=>setStatus("hero-status",safeUiMessage(error?.message||String(error)),"bad"));
 });
 $("disconnect-cloudflare").addEventListener("click",async()=>{await send({type:"cfDisconnect"});setStatus("hero-status","Cloudflare disconnected.");await refreshCloudflare();});
 $("cf-account").addEventListener("change",async e=>{currentAccountId=e.target.value;await refreshBuckets();});
