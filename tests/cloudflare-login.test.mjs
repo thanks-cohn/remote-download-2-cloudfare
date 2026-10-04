@@ -6,6 +6,7 @@ import test from 'node:test';
 
 const source = await readFile(new URL('../extension/background.js', import.meta.url), 'utf8');
 const authSource = await readFile(new URL('../extension/cloudflare-auth.js', import.meta.url), 'utf8');
+const apiSource = await readFile(new URL('../extension/cloudflare-api.js', import.meta.url), 'utf8');
 const optionsSource = await readFile(new URL('../extension/options.js', import.meta.url), 'utf8');
 function event() {
   const listeners = [];
@@ -60,14 +61,14 @@ function harness(shared = {}) {
   const timers = [];
   const context = vm.createContext({
     chrome, navigator:{locks}, crypto:webcrypto, TextEncoder, Uint8Array, URL, URLSearchParams, Headers,
-    AbortController, btoa, console,
+    AbortController, AbortSignal, FormData, btoa, console,
     setTimeout(fn, ms) { const timer = {fn, ms}; timers.push(timer); return timer; },
     clearTimeout(timer) { const i = timers.indexOf(timer); if (i >= 0) timers.splice(i, 1); },
     fetch(...args) { return fetchImpl(...args); }
   });
   context.importScripts = path => {
-    assert.equal(path, 'cloudflare-auth.js');
-    vm.runInContext(authSource, context);
+    if (path === 'cloudflare-auth.js') vm.runInContext(authSource, context);
+    else { assert.equal(path, 'cloudflare-api.js'); vm.runInContext(apiSource, context); }
   };
   if (shared.withoutBackground) vm.runInContext(authSource, context);
   else vm.runInContext(source, context);
@@ -273,4 +274,19 @@ test('two settings contexts share one visible sign-in window', async () => {
   const [first, second] = await Promise.all([a.run('RedownCloudflareAuth.connect()'), b.run('RedownCloudflareAuth.connect()')]);
   assert.equal(first.attemptId, second.attemptId);
   assert.equal([...a.calls, ...b.calls].filter(c => c[0] === 'create').length, 1);
+});
+
+test('Worker deployments cannot overlap and a failed deployment releases the lock', async () => {
+  const h=harness();
+  h.run(`globalThis.active=0;globalThis.maximum=0;
+    deployCloudflareProfile=async options=>{
+      active++; maximum=Math.max(maximum,active);
+      await Promise.resolve(); active--;
+      if(options.fail) throw new Error("deployment failed");
+      return options;
+    };`);
+  const result=await h.run('Promise.allSettled([provisionCloudflareProfile({fail:true}),provisionCloudflareProfile({bucketName:"b"})])');
+  assert.equal(result[0].status,'rejected');
+  assert.equal(result[1].status,'fulfilled');
+  assert.equal(h.run('maximum'),1);
 });

@@ -72,3 +72,5 @@ Open the REDOWN popup, paste a public HTTPS URL, choose a destination, and press
 - Per-bucket Worker ingest uses a generated secret stored in extension local storage.
 - Source URLs must be public HTTPS URLs.
 - Worker-side validation blocks obvious localhost/private IPv4 targets and revalidates redirects.
+
+Version 0.5.10 reads previews and starts downloads directly through the authenticated Cloudflare object API. These actions do not deploy or wait for a REDOWN Worker. Inline previews are limited to 64 MiB; downloads stream through Chrome. Worker provisioning is serialized and preserves its access secret across retries. Failed access checks display a retry message instead of remaining on Connecting.

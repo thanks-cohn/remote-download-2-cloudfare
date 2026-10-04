@@ -734,67 +734,8 @@ async function notify(title, message) {
 function cloudflareErrorMessage(body, fallback) {
   return body?.errors?.[0]?.message || body?.error_description || body?.error || fallback;
 }
-async function storeCloudflareToken(token, previous = {}) {
-  const accessToken = token?.access_token;
-  if (!accessToken) throw new Error("Cloudflare did not return an access token");
-  const auth = {
-    ...previous,
-    accessToken,
-    refreshToken: token.refresh_token || previous.refreshToken || null,
-    expiresAt: token.expires_in ? Date.now() + Number(token.expires_in) * 1000 : null
-  };
-  await chrome.storage.local.set({ cloudflareAuth: auth });
-  return auth;
-}
-async function refreshCloudflareToken(currentAuth) {
-  if (!currentAuth?.refreshToken) {
-    throw new Error("Cloudflare authorization expired. Reconnect Cloudflare.");
-  }
-  const res = await fetch(CF_TOKEN_URL, {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      grant_type: "refresh_token",
-      client_id: CF_CLIENT_ID,
-      refresh_token: currentAuth.refreshToken
-    })
-  });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok || !body.access_token) {
-    await chrome.storage.local.remove("cloudflareAuth");
-    throw new Error(cloudflareErrorMessage(body, "Cloudflare session expired. Connect Cloudflare again."));
-  }
-  return storeCloudflareToken(body, currentAuth);
-}
-async function getCloudflareAuth() {
-  const { cloudflareAuth } = await chrome.storage.local.get("cloudflareAuth");
-  if (!cloudflareAuth?.accessToken) throw new Error("Connect Cloudflare first");
-  if (cloudflareAuth.expiresAt && Date.now() >= cloudflareAuth.expiresAt - 60000) {
-    return refreshCloudflareToken(cloudflareAuth);
-  }
-  return cloudflareAuth;
-}
 async function cfFetch(path, options = {}) {
-  let cloudflareAuth = await getCloudflareAuth();
-  const makeRequest = async auth => {
-    const headers = new Headers(options.headers || {});
-    headers.set("authorization", `Bearer ${auth.accessToken}`);
-    if (options.body && !(options.body instanceof FormData) && !headers.has("content-type")) {
-      headers.set("content-type", "application/json");
-    }
-    return fetch(`${CF_API}${path}`, { ...options, headers });
-  };
-
-  let res = await makeRequest(cloudflareAuth);
-  if (res.status === 401 && cloudflareAuth.refreshToken) {
-    cloudflareAuth = await refreshCloudflareToken(cloudflareAuth);
-    res = await makeRequest(cloudflareAuth);
-  }
-  if (res.status === 401) {
-    await chrome.storage.local.remove("cloudflareAuth");
-    throw new Error("Cloudflare rejected this authorization. Connect Cloudflare again.");
-  }
-  return res;
+  return RedownCloudflareApi.request(path, options);
 }
 async function cfJson(path, options = {}) {
   const res = await cfFetch(path, options);
@@ -805,6 +746,7 @@ async function cfJson(path, options = {}) {
   return body.result ?? body;
 }
 importScripts("cloudflare-auth.js");
+importScripts("cloudflare-api.js");
 async function connectCloudflare() { return RedownCloudflareAuth.connect(); }
 async function disconnectCloudflare() {
   const { cloudflareAuth } = await chrome.storage.local.get("cloudflareAuth");
@@ -880,7 +822,10 @@ async function ensureWorkersSubdomain(accountId) {
   }
   throw new Error("Could not create a workers.dev subdomain for this Cloudflare account");
 }
-async function provisionCloudflareProfile({ accountId, accountName, bucketName, profileName, folders, explorerOnly = false }) {
+async function provisionCloudflareProfile(options) {
+  return navigator.locks.request("redown-provision-profile", () => deployCloudflareProfile(options));
+}
+async function deployCloudflareProfile({ accountId, accountName, bucketName, profileName, folders, explorerOnly = false }) {
   if (!accountId || !bucketName) throw new Error("Choose an account and bucket");
 
   const profiles = await getProfiles();
@@ -889,7 +834,10 @@ async function provisionCloudflareProfile({ accountId, accountName, bucketName, 
   );
   const existing = existingIndex >= 0 ? profiles[existingIndex] : null;
 
-  const secret = existing?.token || randomString(36);
+  const secretKey = `redownWorkerSecret:${accountId}:${bucketName}`;
+  const storedSecret = (await chrome.storage.session.get(secretKey))[secretKey];
+  const secret = existing?.token || storedSecret || randomString(36);
+  await chrome.storage.session.set({[secretKey]:secret});
   const scriptName = existing?.scriptName || `redown-${safeSlug(bucketName, 38)}-${accountId.slice(0, 6)}`;
 
   // A workers.dev account subdomain must exist before a script can be enabled there.
@@ -938,7 +886,7 @@ async function provisionCloudflareProfile({ accountId, accountName, bucketName, 
   while (Date.now() - healthStartedAt < healthTimeoutMs) {
     attempt++;
     try {
-      const response = await fetch(workerUrl, {
+      const response = await RedownCloudflareApi.boundedFetch(workerUrl, {
         method: "GET",
         cache: "no-store",
         headers: { "cache-control": "no-cache" }
@@ -974,7 +922,9 @@ async function provisionCloudflareProfile({ accountId, accountName, bucketName, 
 
   // Verify the R2 binding with an actual write and materialize visible prefix markers
   // so brand-new empty buckets immediately show their configured REDOWN locations.
-  const prefixCheck = await fetch(workerUrl, {
+  let prefixCheck;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    prefixCheck = await RedownCloudflareApi.boundedFetch(workerUrl, {
     method: "POST",
     headers: {
       authorization: `Bearer ${secret}`,
@@ -990,6 +940,10 @@ async function provisionCloudflareProfile({ accountId, accountName, bucketName, 
           ].filter(Boolean)))
     })
   });
+    if (![401,403,404].includes(prefixCheck.status) || attempt === 2) break;
+    await prefixCheck.body?.cancel();
+    await new Promise(resolve => setTimeout(resolve, 2000));
+  }
   const prefixBody = await prefixCheck.json().catch(() => ({}));
   if (!prefixCheck.ok || !prefixBody?.ok) {
     throw new Error(
@@ -1319,7 +1273,7 @@ function cleanExplorerName(value) {
 async function workerAcceptsProfile(profile) {
   if (!profile?.workerUrl || !profile?.token) return false;
   try {
-    const response = await fetch(profile.workerUrl, {
+    const response = await RedownCloudflareApi.boundedFetch(profile.workerUrl, {
       method:"POST",
       cache:"no-store",
       headers:{
@@ -1483,7 +1437,7 @@ function objectKeyFromLocation(profile, location) {
 async function renameCloudflareTransfer(profile, location, newFilename) {
   const oldKey = objectKeyFromLocation(profile, location);
   if (!oldKey) throw new Error("Could not determine the R2 object path for this download");
-  const response = await fetch(profile.workerUrl, {
+  const response = await RedownCloudflareApi.boundedFetch(profile.workerUrl, {
     method: "POST",
     headers: {
       authorization: `Bearer ${profile.token || ""}`,

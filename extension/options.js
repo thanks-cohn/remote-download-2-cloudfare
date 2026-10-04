@@ -7,6 +7,8 @@ let workspaceObjects=[];
 let workspacePreviewExpanded=false;
 let workspacePreviewLightbox=false;
 let workspacePreviewRequestId=0;
+let workspacePreviewUrl="";
+let workspacePreviewAbort=null;
 const defaultLocationPrefixCache=new Map();
 const presetLocationCache=new Map();
 let uploadLocationPrefixes=[];
@@ -16,17 +18,21 @@ function uid(){return crypto.randomUUID();}
 function safeUiMessage(message){
   const raw=String(message||"");
   if(/unauthorized|\b401\b|\b403\b/i.test(raw))
-    return "Connecting… REDOWN is verifying Cloudflare access.";
+    return "Cloudflare access could not be verified. Retry, or reconnect Cloudflare.";
   return raw;
 }
 function setStatus(id,msg,kind=""){
   const el=$(id);
   const raw=String(msg||"");
-  const transient=/unauthorized|\b401\b|\b403\b/i.test(raw);
-  el.textContent=transient?"Connecting… REDOWN is verifying Cloudflare access.":raw;
-  el.className="status"+((transient?"":kind)?" "+kind:"");
+  el.textContent=safeUiMessage(raw);
+  el.className="status"+(kind?" "+kind:"");
 }
-async function send(message){return chrome.runtime.sendMessage(message);}
+async function send(message){
+  let timeout;
+  try { return await Promise.race([chrome.runtime.sendMessage(message),new Promise((_,reject)=>{
+    timeout=setTimeout(()=>reject(new Error("REDOWN did not finish this request. Please retry.")),120000);
+  })]); } finally { clearTimeout(timeout); }
+}
 async function saveProfiles(){await chrome.storage.local.set({profiles});}
 function displayName(p){return p.name||p.bucketName||p.repository||"Destination";}
 let saveTimer=null;
@@ -1162,31 +1168,20 @@ async function showWorkspacePreview(obj,row,urlOverride=""){
   document.querySelectorAll("#workspace-objects .object.active").forEach(el=>el.classList.remove("active"));
   row?.classList.add("active");
   const key=obj.key||obj.name||String(obj);
-  let previewProfile=r2Profiles().find(p=>p.accountId===workspaceTarget?.accountId&&p.bucketName===workspaceTarget?.bucketName);
-  if(!previewProfile){
-    const preparing=document.createElement("div");preparing.className="meta";preparing.innerHTML='<span class="operation-spinner"></span>Preparing preview…';root.append(preparing);
-    try{previewProfile=await ensurePrepared(workspaceTarget);}catch(error){if(requestId!==workspacePreviewRequestId)return;preparing.textContent=friendlyError(error,"prepare the preview");return;}
-    if(requestId!==workspacePreviewRequestId)return;
-    root.replaceChildren();
-  }
+  workspacePreviewAbort?.abort();
+  workspacePreviewAbort=new AbortController();
+  if(workspacePreviewUrl) URL.revokeObjectURL(workspacePreviewUrl);
+  workspacePreviewUrl="";
   let url=urlOverride;
   if(!url){
-    let privateRead=await send({type:"cfPrivateObjectUrl",...explorerSource(),key,ttl:900});
-    if(requestId!==workspacePreviewRequestId)return;
-    if(!privateRead?.ok && isTransientBucketAccessError(new Error(privateRead?.error||""))){
-      root.innerHTML='<div class="meta"><span class="operation-spinner"></span>Preparing bucket… Verifying Cloudflare access…</div>';
-      try{
-        await ensurePrepared(workspaceTarget);
-        if(requestId!==workspacePreviewRequestId)return;
-        privateRead=await send({type:"cfPrivateObjectUrl",...explorerSource(),key,ttl:900});
-        if(requestId!==workspacePreviewRequestId)return;
-      }catch(error){
-        root.textContent=friendlyError(error,"open this preview");
-        return;
-      }
+    try {
+      url=await RedownCloudflareApi.preview(explorerSource(),key,objectContentType(obj,key),workspacePreviewAbort.signal);
+      if(requestId!==workspacePreviewRequestId){URL.revokeObjectURL(url);return;}
+      workspacePreviewUrl=url;
+    } catch(error) {
+      if(requestId===workspacePreviewRequestId) root.textContent=error?.message || "Could not open this preview. Retry.";
+      return;
     }
-    if(!privateRead?.ok){root.textContent=friendlyError(new Error(privateRead?.error||""),"open this preview");return;}
-    url=privateRead.url;
   }
   if(requestId!==workspacePreviewRequestId)return;
   root.replaceChildren();
@@ -1711,7 +1706,7 @@ function isTransientBucketAccessError(error) {
 function friendlyError(error, action = "complete that action") {
   const raw = error?.message || String(error);
   if (isTransientBucketAccessError(error))
-    return "Preparing bucket… REDOWN is still verifying Cloudflare access.";
+    return "Cloudflare access could not be verified. Retry, or reconnect Cloudflare.";
   if (/not found|404/i.test(raw)) return "The item is no longer available.";
   return `Could not ${action}.`;
 }
@@ -1733,7 +1728,7 @@ async function ensurePrepared(target = workspaceTarget) {
     );
 
     let lastError;
-    for (let attempt = 0; attempt < 10; attempt++) {
+    for (let attempt = 0; attempt < 2; attempt++) {
       const result = await send({
         type: "cfPrepareBucket",
         accountId: target.accountId,
@@ -1752,16 +1747,16 @@ async function ensurePrepared(target = workspaceTarget) {
       );
 
       // Temporary Worker/auth propagation is a readiness state, not a user-facing error.
-      explorerOperation.message =
+      if (explorerOperation) explorerOperation.message =
         "Preparing bucket… Verifying Cloudflare access. This can take a few minutes.";
-      explorerOperation.state = "running";
+      if (explorerOperation) explorerOperation.state = "running";
       renderOperation();
 
       // Clearly non-transient errors should still fail promptly.
       if (!isTransientBucketAccessError(lastError)) break;
 
-      if (attempt < 9)
-        await new Promise((resolve) => setTimeout(resolve, 30000));
+      if (attempt < 1)
+        await new Promise((resolve) => setTimeout(resolve, 2000));
     }
 
     finishOperation(
@@ -2688,18 +2683,12 @@ function beginNewFolder() {
 async function explorerDownload(item) {
   if (item.folder) return;
   setOperation("download", `Preparing “${item.name}” for download…`);
-  const result = await send({
-    type: "cfDownloadObject",
-    ...explorerSource(),
-    key: item.key,
-    filename: item.name,
-  });
-  if (!result?.ok) {
-    finishOperation(friendlyError(new Error(result?.error || ""), "download this file"), true);
-    return;
+  try {
+    await RedownCloudflareApi.download(explorerSource(),item.key,item.name);
+    finishOperation(`Downloading “${item.name}”…`);
+  } catch(error) {
+    finishOperation(error?.message || "Could not download this file. Retry.",true);
   }
-  await refreshProfiles();
-  finishOperation(`Downloading “${item.name}”…`);
 }
 async function showProperties(item) {
   if (item.folder) {
@@ -3411,6 +3400,7 @@ async function addBucketPreset(bucketName){
   const account=cfAccounts.find(a=>a.id===currentAccountId);
   if(!account)return;
   setStatus("cf-status",`Preparing ${bucketName}… REDOWN is verifying the remote transfer Worker before saving this preset.`);
+  try {
   const result=await send({
     type:"cfProvision",
     accountId:account.id,
@@ -3424,6 +3414,7 @@ async function addBucketPreset(bucketName){
   profiles=stored.profiles||[];
   renderProfiles();
   setStatus("cf-status",`${bucketName} is ready. REDOWN verified a real R2 write and prepared its default locations. Right-click a link, image, video, audio item, or GLB link → REDOWN → ${bucketName}.`,"ok");
+  } catch(error) { setStatus("cf-status",error?.message || "Could not prepare bucket. Retry.","bad"); }
 }
 
 async function loginRequest(operation) {
