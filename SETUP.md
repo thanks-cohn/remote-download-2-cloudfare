@@ -33,6 +33,8 @@ REDOWN automatically provisions the per-bucket Worker required for true remote t
 
 ## Configure a bucket preset
 
+Choose one active right-click mode using **Use nested menu**, available in settings and in the REDOWN right-click menu. Unchecked uses **Simple**; checked uses **Nested**. The two destination lists never appear together, and switching modes preserves both configurations.
+
 Each bucket has independent behavior.
 
 ### Quick send
@@ -55,11 +57,13 @@ In **Nested · Cloudflare locations**, every row has three columns:
 
 A root row creates or selects a bucket. A child row creates or selects a folder within its parent. For example, `characters → heroes → wizard` uses the R2 prefix `characters/heroes/wizard/`. **+ Add bucket** adds another root row.
 
-The right-click menu follows this hierarchy. A leaf sends directly to its location; a parent includes **Send here** alongside its children. **Show nested menu** hides or shows the hierarchy without erasing it. Quick send has its own visibility setting.
+The right-click menu follows this hierarchy. A leaf sends directly to its location; a parent includes **Send here** alongside its children. **Include in Nested mode** includes or excludes this hierarchy. **Include in Simple mode** controls the direct destination. Neither setting switches the active mode or erases locations. Nested buckets appear directly under REDOWN without an account wrapper.
 
 Previous R2 menu entries are retained as a backup and checked against actual locations. Missing locations must be selected or explicitly created; opening the nested editor does not create folders or move existing files.
 
-GitHub retains its existing menu editor and repository paths.
+Chrome's native context menu turns locations with children into submenus. It cannot also expose an action on the parent row through the extension API, so **Send here** remains necessary for targeting that parent. Separate click-to-send and hover-to-expand behavior would require a custom menu surface.
+
+GitHub retains its existing menu editor and repository paths in Simple mode.
 
 ## Paste-a-URL fallback
 

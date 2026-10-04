@@ -55,5 +55,11 @@
     }
     return result;
   }
-  globalThis.RedownNestedLocations={name,path,blank,invalidate,setLocation,fromLegacy,destinations};
+  function menuMode(value,profiles=[]){
+    if(value==='simple' || value==='nested')return value;
+    // Upgrade existing nested users without showing both modes at once.
+    return profiles.some(profile=>profile.type==='cloudflare-r2' && !profile.explorerManaged &&
+      (profile.nestedMenu ? profile.nestedMenu.enabled : profile.menuTree?.length)) ? 'nested' : 'simple';
+  }
+  globalThis.RedownNestedLocations={name,path,blank,invalidate,setLocation,fromLegacy,destinations,menuMode};
 })();

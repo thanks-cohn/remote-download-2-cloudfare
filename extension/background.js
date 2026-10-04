@@ -1588,9 +1588,8 @@ function addPresetTree(profile, nodes, parentId, pathPrefix = []) {
 function addNestedLocations(profile){
   const locations=RedownNestedLocations.destinations(profile.nestedMenu);
   if(!locations.length)return;
-  const parent=`nested-profile:${profile.id}`;
+  const parent=ROOT_MENU_ID;
   const contexts=["link","image","video","audio","page"];
-  chrome.contextMenus.create({id:parent,parentId:ROOT_MENU_ID,title:`${profile.accountName || profile.name || "Cloudflare"} · Nested`,contexts});
   for(const item of locations){
     const id=`nested:${profile.id}:${item.rootId}:${item.nodeId}`;
     const parentNode=item.ids.length>1?item.ids.at(-2):item.rootId;
@@ -1615,8 +1614,13 @@ async function buildMenus() {
   });
 
   const profiles = await getProfiles();
+  const storedMode=(await chrome.storage.local.get("rightClickMode")).rightClickMode;
+  const mode=RedownNestedLocations.menuMode(storedMode,profiles);
+  if(storedMode!=="simple" && storedMode!=="nested")await chrome.storage.local.set({rightClickMode:mode});
   const presets = profiles
-    .filter(p => !p.explorerManaged && (p.showInContextMenu !== false || p.nestedMenu?.enabled))
+    .filter(p => !p.explorerManaged && (mode==='nested'
+      ? p.type==='cloudflare-r2' && (p.nestedMenu ? p.nestedMenu.enabled : p.menuTree?.length)
+      : p.showInContextMenu !== false))
     .sort((a,b) => (a.menuOrder ?? 999) - (b.menuOrder ?? 999));
 
   if (!presets.length) {
@@ -1624,16 +1628,15 @@ async function buildMenus() {
       id:"redown-setup", parentId:ROOT_MENU_ID, title:"Set up a destination…",
       contexts:["link","image","video","audio","page"]
     });
-    return;
+    addMenuControls(mode);return;
   }
 
   for (const p of presets) {
     const title = p.menuLabel || p.name || p.bucketName || p.repository || "Destination";
 
-    if(p.type === "cloudflare-r2" && p.nestedMenu){
-      if(p.showInContextMenu !== false)chrome.contextMenus.create({id:`quick:${p.id}`,parentId:ROOT_MENU_ID,title,contexts:["link","image","video","audio","page"]});
+    if(mode==='nested' && p.nestedMenu){
       addNestedLocations(p);
-    } else if (Array.isArray(p.menuTree) && p.menuTree.length) {
+    } else if ((mode==='nested' || p.type==='github') && Array.isArray(p.menuTree) && p.menuTree.length) {
       const parentId = `preset:${p.id}`;
       chrome.contextMenus.create({
         id: parentId, parentId: ROOT_MENU_ID, title,
@@ -1648,6 +1651,12 @@ async function buildMenus() {
     }
   }
 
+  addMenuControls(mode);
+}
+function addMenuControls(mode){
+  const contexts=["link","image","video","audio","page"];
+  chrome.contextMenus.create({id:"redown-mode-separator",parentId:ROOT_MENU_ID,type:"separator",contexts});
+  chrome.contextMenus.create({id:"redown-nested-mode",parentId:ROOT_MENU_ID,type:"checkbox",title:"Use nested menu",checked:mode==='nested',contexts});
   chrome.contextMenus.create({
     id:"redown-manage", parentId:ROOT_MENU_ID, title:"Manage destinations…",
     contexts:["link","image","video","audio","page"]
@@ -1657,9 +1666,13 @@ async function buildMenus() {
 chrome.runtime.onInstalled.addListener(rebuildMenus);
 chrome.runtime.onStartup.addListener(rebuildMenus);
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === "local" && changes.profiles) rebuildMenus();
+  if (area === "local" && (changes.profiles || changes.rightClickMode)) rebuildMenus();
 });
 chrome.contextMenus.onClicked.addListener(async info => {
+  if(info.menuItemId==='redown-nested-mode'){
+    await chrome.storage.local.set({rightClickMode:info.checked ? 'nested' : 'simple'});
+    return;
+  }
   if (info.menuItemId === "redown-setup" || info.menuItemId === "redown-manage") {
     return chrome.runtime.openOptionsPage();
   }

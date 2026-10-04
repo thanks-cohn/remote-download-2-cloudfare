@@ -167,6 +167,7 @@
     @media(max-width:1000px){.explorer-body{grid-template-columns:190px minmax(360px,1fr)}.explorer-preview{display:none}}
     @media(max-width:760px){.explorer-toolbar{grid-template-columns:auto 1fr}.explorer-actions{display:flex;justify-content:flex-end}.breadcrumbs{display:none}.explorer-search{grid-column:1/-1}.explorer-body{display:block}.explorer-sidebar{display:none}.location-mobile{display:block;padding:10px}.file-head,.file-row{grid-template-columns:minmax(160px,1fr) 75px 105px}.file-head>*:last-child,.file-row>*:last-child{display:none}}
 
+    .right-click-mode{padding:16px;border:1px solid var(--line);border-radius:12px;background:var(--panel2);margin:0 0 20px}.right-click-mode .meta{margin-top:8px}
     .nested-section-head{margin:32px 0 16px;padding-top:24px;border-top:1px solid var(--line)}
     .nested-section-head h3{margin:0 0 6px}.nested-section-head p{margin:0;color:var(--muted);max-width:760px}
     .nested-card{padding:22px;border:1px solid var(--line);border-radius:18px;background:var(--panel);margin:16px 0}
@@ -193,7 +194,7 @@
       <img src="icon.svg" alt="">
       <div><div class="wordmark">REDOWN</div><div class="sub">Remote downloads, without the download.</div></div>
     </div>
-    <div class="pill">Premium utility · v0.5.11</div>
+    <div class="pill">Premium utility · v0.5.12</div>
   </header>
 
   <section class="hero">
@@ -230,6 +231,10 @@
   <section class="section">
     <div class="section-head">
       <div><h2>Right-click presets</h2><div class="section-note">Choose a direct destination in Simple, or build a location hierarchy in Nested.</div></div>
+    </div>
+    <div class="right-click-mode">
+      <label class="toggle"><input id="use-nested-menu" type="checkbox" aria-describedby="right-click-mode-status">Use nested menu</label>
+      <div id="right-click-mode-status" class="meta" role="status">Simple is active. Check to use Nested instead.</div>
     </div>
     <h3>Simple · Quick send</h3>
     <div id="profiles"></div>

@@ -1,5 +1,6 @@
 const $=id=>document.getElementById(id);
 let profiles=[];
+let rightClickMode="simple";
 let cfAccounts=[];
 let currentAccountId="";
 let workspaceTarget=null;
@@ -442,7 +443,22 @@ function assetCorsControl(profile){
   return wrap;
 }
 
+function renderRightClickMode(){
+  $("use-nested-menu").checked=rightClickMode==='nested';
+  $("right-click-mode-status").textContent=rightClickMode==='nested'
+    ? "Nested is active. Simple destinations are hidden from the right-click menu."
+    : "Simple is active. Nested destinations are hidden from the right-click menu.";
+}
+$("use-nested-menu").addEventListener("change",async event=>{
+  const checkbox=event.target,previous=rightClickMode;
+  rightClickMode=checkbox.checked ? 'nested' : 'simple';checkbox.disabled=true;
+  try{await chrome.storage.local.set({rightClickMode});renderRightClickMode();}
+  catch(error){rightClickMode=previous;renderRightClickMode();$("right-click-mode-status").textContent=error?.message || "Could not save the menu mode. Retry.";}
+  finally{checkbox.disabled=false;}
+});
+
 function renderProfiles(){
+  renderRightClickMode();
   const root=$("profiles");
   root.replaceChildren();
   const visibleProfiles=profiles.filter(profile=>!profile.explorerManaged);
@@ -492,7 +508,7 @@ function renderProfiles(){
     const toggle=document.createElement("label");toggle.className="toggle";
     const check=document.createElement("input");check.type="checkbox";check.checked=p.showInContextMenu!==false;
     check.addEventListener("change",()=>{p.showInContextMenu=check.checked;scheduleSave();});
-    toggle.append(check,document.createTextNode("Show in right-click menu"));
+    toggle.append(check,document.createTextNode(p.type==="cloudflare-r2" ? "Include in Simple mode" : "Show in right-click menu"));
     actions.append(toggle);
 
     const up=document.createElement("button");up.className="ghost";up.textContent="Move up";
@@ -3435,6 +3451,8 @@ async function addBucketPreset(bucketName){
   if(!result?.ok){setStatus("cf-status",result?.error||"Could not prepare bucket","bad");return;}
   const stored=await chrome.storage.local.get("profiles");
   profiles=stored.profiles||[];
+  rightClickMode=RedownNestedLocations.menuMode(stored.rightClickMode,profiles);
+  if(stored.rightClickMode!=="simple" && stored.rightClickMode!=="nested")await chrome.storage.local.set({rightClickMode});
   renderProfiles();
   setStatus("cf-status",`${bucketName} is ready. REDOWN verified a real R2 write and prepared its default locations. Right-click a link, image, video, audio item, or GLB link → REDOWN → ${bucketName}.`,"ok");
   } catch(error) { setStatus("cf-status",error?.message || "Could not prepare bucket. Retry.","bad"); }
@@ -3521,7 +3539,9 @@ $("refresh-history").addEventListener("click",()=>renderHistory({markSeen:true})
 
 let downloadsDirty=false;
 chrome.storage.onChanged.addListener((changes,area)=>{
-  if(area!=="local"||!changes.transferHistory)return;
+  if(area!=="local")return;
+  if(changes.rightClickMode){rightClickMode=RedownNestedLocations.menuMode(changes.rightClickMode.newValue,profiles);renderRightClickMode();}
+  if(!changes.transferHistory)return;
   downloadsDirty=true;
   if(document.visibilityState==="visible"&&document.hasFocus()){
     downloadsDirty=false;
@@ -3537,8 +3557,10 @@ document.addEventListener("visibilitychange",()=>{if(document.visibilityState===
 window.addEventListener("focus",refreshDownloadsOnAccess);
 
 (async()=>{
-  const stored=await chrome.storage.local.get(["profiles","cloudflareAuth"]);
+  const stored=await chrome.storage.local.get(["profiles","cloudflareAuth","rightClickMode"]);
   profiles=stored.profiles||[];
+  rightClickMode=RedownNestedLocations.menuMode(stored.rightClickMode,profiles);
+  if(stored.rightClickMode!=="simple" && stored.rightClickMode!=="nested")await chrome.storage.local.set({rightClickMode});
   renderProfiles();
   wireWorkspace();
   renderWorkspaceProfiles();
