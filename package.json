@@ -8,9 +8,10 @@
     "deploy": "wrangler deploy",
     "dev:worker": "wrangler dev",
     "test": "node --test tests/*.test.mjs",
-    "check": "node --check extension/cloudflare-api.js && node --check extension/cloudflare-auth.js && node --check extension/background.js && node --check extension/options.js && node --check worker/src/index.js"
+    "check": "node --check extension/cloudflare-api.js && node --check extension/cloudflare-auth.js && node --check extension/background.js && node --check extension/nested-locations.js && node --check extension/nested-menu-editor.js && node --check extension/options.js && node --check worker/src/index.js"
   },
   "devDependencies": {
+    "jsdom": "^26.1.0",
     "wrangler": "^4.0.0"
   },
   "dependencies": {

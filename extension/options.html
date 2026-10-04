@@ -166,6 +166,24 @@
     @media(max-width:1120px){.explorer-actions{display:none}}
     @media(max-width:1000px){.explorer-body{grid-template-columns:190px minmax(360px,1fr)}.explorer-preview{display:none}}
     @media(max-width:760px){.explorer-toolbar{grid-template-columns:auto 1fr}.explorer-actions{display:flex;justify-content:flex-end}.breadcrumbs{display:none}.explorer-search{grid-column:1/-1}.explorer-body{display:block}.explorer-sidebar{display:none}.location-mobile{display:block;padding:10px}.file-head,.file-row{grid-template-columns:minmax(160px,1fr) 75px 105px}.file-head>*:last-child,.file-row>*:last-child{display:none}}
+
+    .nested-section-head{margin:32px 0 16px;padding-top:24px;border-top:1px solid var(--line)}
+    .nested-section-head h3{margin:0 0 6px}.nested-section-head p{margin:0;color:var(--muted);max-width:760px}
+    .nested-card{padding:22px;border:1px solid var(--line);border-radius:18px;background:var(--panel);margin:16px 0}
+    .nested-heading{display:flex;justify-content:space-between;gap:20px;align-items:center;margin-bottom:22px}.nested-heading h3{margin:0 0 4px}
+    .nested-columns,.nested-location-row{display:grid;grid-template-columns:minmax(160px,1fr) minmax(190px,1fr) 150px;gap:14px;align-items:center}
+    .nested-columns{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);padding-bottom:12px}
+    .nested-group{margin-bottom:12px}.nested-choice,.nested-create,.nested-actions{display:flex;gap:8px;min-width:0;align-items:center}
+    .nested-existing,.nested-new{min-width:0;flex:1;width:100%}.nested-collapse{padding:6px;width:24px;flex-shrink:0}
+    .nested-create button{flex-shrink:0}.nested-actions button{font-size:12px;padding:8px 10px;white-space:nowrap}
+    .nested-path{margin:6px 0 12px 32px;font-size:12px;color:var(--muted);overflow-wrap:anywhere}
+    .nested-children{margin-left:18px;padding-left:12px;border-left:1px solid var(--line)}
+    .nested-children .nested-children .nested-children{margin-left:6px;padding-left:6px}
+    .nested-import-note{padding:10px 12px;background:var(--panel2);border-radius:8px;color:var(--muted);font-size:12px;margin-bottom:16px}
+    .nested-footer{display:flex;gap:10px;padding-top:12px;border-top:1px solid var(--line)}.nested-status:empty{display:none}
+    .nested-card :is(input,select,button):focus-visible{outline:2px solid var(--purple2);outline-offset:3px}
+    @media(max-width:800px){.nested-location-row{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.nested-actions{grid-column:1/-1;margin-left:32px}.nested-columns{grid-template-columns:1fr 1fr}.nested-columns span:last-child{display:none}.nested-card{padding:14px}.nested-heading{align-items:flex-start;flex-direction:column}}
+    @media(max-width:520px){.nested-location-row{grid-template-columns:minmax(0,1fr)}.nested-create{margin-left:32px}.nested-columns{display:none}.nested-children{margin-left:6px;padding-left:6px}}
   </style>
 </head>
 <body>
@@ -175,7 +193,7 @@
       <img src="icon.svg" alt="">
       <div><div class="wordmark">REDOWN</div><div class="sub">Remote downloads, without the download.</div></div>
     </div>
-    <div class="pill">Premium utility · v0.5.10</div>
+    <div class="pill">Premium utility · v0.5.11</div>
   </header>
 
   <section class="hero">
@@ -211,10 +229,13 @@
 
   <section class="section">
     <div class="section-head">
-      <div><h2>Right-click presets</h2><div class="section-note">Each destination can be one-click or have its own menu tree of any depth.</div></div>
+      <div><h2>Right-click presets</h2><div class="section-note">Choose a direct destination in Simple, or build a location hierarchy in Nested.</div></div>
     </div>
+    <h3>Simple · Quick send</h3>
     <div id="profiles"></div>
     <div id="profiles-empty" class="empty">No destinations yet. Connect Cloudflare or add GitHub above.</div>
+    <div class="nested-section-head"><h3>Nested · Cloudflare locations</h3><p>Select existing buckets and folders. Create adds a new location at that row’s level; + Child adds a row inside the selected location.</p></div>
+    <div id="nested-profiles"></div>
   </section>
 
   <section id="local-tools" class="section" hidden>
@@ -293,6 +314,8 @@
 <script type="module" src="model-viewer.min.js"></script>
 <script src="cloudflare-auth.js"></script>
 <script src="cloudflare-api.js"></script>
+<script src="nested-locations.js"></script>
+<script src="nested-menu-editor.js"></script>
 <script src="options.js"></script>
 </body>
 </html>

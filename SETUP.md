@@ -37,7 +37,7 @@ Each bucket has independent behavior.
 
 ### Quick send
 
-Leave its menu tree empty. Set the default destination type/path.
+In **Simple · Quick send**, set the direct destination and its menu label. This remains independent of the nested menu.
 
 Right-click flow:
 
@@ -45,21 +45,21 @@ Right-click flow:
 REDOWN -> bucket -> download starts
 ```
 
-### Nested menu
+### Nested Cloudflare locations
 
-Select **Nested menu** and add menu items. Any item can have children, so menus can be as deep as you want.
+In **Nested · Cloudflare locations**, every row has three columns:
 
-A leaf is a real download destination. For R2 it stores a prefix such as:
+- **Existing location:** choose an actual bucket, or a folder immediately inside the selected parent.
+- **Create a new location here:** enter a new name and click **Create**. Selecting the dropdown never fills this field.
+- **Actions:** **+ Child** adds a row inside the selected location. **Remove** removes only the menu branch; it never deletes Cloudflare data.
 
-```text
-3d/characters/heroes
-```
+A root row creates or selects a bucket. A child row creates or selects a folder within its parent. For example, `characters → heroes → wizard` uses the R2 prefix `characters/heroes/wizard/`. **+ Add bucket** adds another root row.
 
-For GitHub it stores a repository path such as:
+The right-click menu follows this hierarchy. A leaf sends directly to its location; a parent includes **Send here** alongside its children. **Show nested menu** hides or shows the hierarchy without erasing it. Quick send has its own visibility setting.
 
-```text
-assets/3d/characters/heroes
-```
+Previous R2 menu entries are retained as a backup and checked against actual locations. Missing locations must be selected or explicitly created; opening the nested editor does not create folders or move existing files.
+
+GitHub retains its existing menu editor and repository paths.
 
 ## Paste-a-URL fallback
 

@@ -747,6 +747,7 @@ async function cfJson(path, options = {}) {
 }
 importScripts("cloudflare-auth.js");
 importScripts("cloudflare-api.js");
+importScripts("nested-locations.js");
 async function connectCloudflare() { return RedownCloudflareAuth.connect(); }
 async function disconnectCloudflare() {
   const { cloudflareAuth } = await chrome.storage.local.get("cloudflareAuth");
@@ -1236,7 +1237,7 @@ async function listFolderChildren(accountId, bucketName, parentPrefix = "", limi
   const parent = cleanExplorerPrefix(parentPrefix || "");
   const children = new Set();
   let cursor = "";
-  for (let page = 0; page < 20 && children.size < limit; page++) {
+  while (children.size < limit) {
     const result = await listObjectsPage(accountId, bucketName, parent, cursor, "/");
     for (const raw of result.delimited || []) {
       const full=String(raw||"").replace(/\/$/,"");
@@ -1584,7 +1585,30 @@ function addPresetTree(profile, nodes, parentId, pathPrefix = []) {
   }
 }
 
+function addNestedLocations(profile){
+  const locations=RedownNestedLocations.destinations(profile.nestedMenu);
+  if(!locations.length)return;
+  const parent=`nested-profile:${profile.id}`;
+  const contexts=["link","image","video","audio","page"];
+  chrome.contextMenus.create({id:parent,parentId:ROOT_MENU_ID,title:`${profile.accountName || profile.name || "Cloudflare"} · Nested`,contexts});
+  for(const item of locations){
+    const id=`nested:${profile.id}:${item.rootId}:${item.nodeId}`;
+    const parentNode=item.ids.length>1?item.ids.at(-2):item.rootId;
+    const parentId=item.ids.length?`nested:${profile.id}:${item.rootId}:${parentNode}`:parent;
+    chrome.contextMenus.create({id,parentId,title:item.name,contexts});
+    if(locations.some(child=>child.rootId===item.rootId && child.ids.length===item.ids.length+1 && (item.ids.length===0 || child.ids.at(-2)===item.nodeId)))
+      chrome.contextMenus.create({id:`${id}:send`,parentId:id,title:"Send here",contexts});
+  }
+}
+
+let menuRebuildQueue=Promise.resolve();
 async function rebuildMenus() {
+  // Location verification can save several rows together. Chrome menu rebuilds
+  // must finish in order so another removeAll cannot delete a pending parent.
+  const operation=menuRebuildQueue.catch(()=>{}).then(buildMenus);
+  menuRebuildQueue=operation;return operation;
+}
+async function buildMenus() {
   await chrome.contextMenus.removeAll();
   chrome.contextMenus.create({
     id: ROOT_MENU_ID, title: "REDOWN", contexts: ["link","image","video","audio","page"]
@@ -1592,7 +1616,7 @@ async function rebuildMenus() {
 
   const profiles = await getProfiles();
   const presets = profiles
-    .filter(p => p.showInContextMenu !== false)
+    .filter(p => !p.explorerManaged && (p.showInContextMenu !== false || p.nestedMenu?.enabled))
     .sort((a,b) => (a.menuOrder ?? 999) - (b.menuOrder ?? 999));
 
   if (!presets.length) {
@@ -1606,7 +1630,10 @@ async function rebuildMenus() {
   for (const p of presets) {
     const title = p.menuLabel || p.name || p.bucketName || p.repository || "Destination";
 
-    if (Array.isArray(p.menuTree) && p.menuTree.length) {
+    if(p.type === "cloudflare-r2" && p.nestedMenu){
+      if(p.showInContextMenu !== false)chrome.contextMenus.create({id:`quick:${p.id}`,parentId:ROOT_MENU_ID,title,contexts:["link","image","video","audio","page"]});
+      addNestedLocations(p);
+    } else if (Array.isArray(p.menuTree) && p.menuTree.length) {
       const parentId = `preset:${p.id}`;
       chrome.contextMenus.create({
         id: parentId, parentId: ROOT_MENU_ID, title,
@@ -1655,6 +1682,24 @@ chrome.contextMenus.onClicked.addListener(async info => {
       const message = error?.message || String(error);
       await recordTransfer({ ok:false, sourceUrl, profileId:profile.id, profileName:profile.name, category:profile.defaultCategory || "files", error:message });
       await notify("REDOWN failed", message);
+    }
+    return;
+  }
+
+  const nestedMatch=String(info.menuItemId).match(/^nested:([^:]+):([^:]+):([^:]+)(?::send)?$/);
+  if(nestedMatch){
+    const profile=profiles.find(p=>p.id===nestedMatch[1]);
+    const destination=RedownNestedLocations.destinations(profile?.nestedMenu).find(item=>item.rootId===nestedMatch[2] && item.nodeId===nestedMatch[3]);
+    if(!profile || !destination)return notify("REDOWN","That nested location is no longer available. Refresh it in settings.");
+    const target={...profile,bucketName:destination.bucketName};
+    try{
+      const location=await ingestCloudflareAtPrefix(target,sourceUrl,destination.prefix,basenameFromUrl(sourceUrl));
+      await recordTransfer({ok:true,sourceUrl,profileId:profile.id,profileName:profile.name,category:"files",location});
+      await notify("REDOWN complete",location);
+    }catch(error){
+      const message=error?.message || String(error);
+      await recordTransfer({ok:false,sourceUrl,profileId:profile.id,profileName:profile.name,category:"files",error:message});
+      await notify("REDOWN failed",message);
     }
     return;
   }

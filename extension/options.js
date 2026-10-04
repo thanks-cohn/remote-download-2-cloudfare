@@ -34,6 +34,27 @@ async function send(message){
   })]); } finally { clearTimeout(timeout); }
 }
 async function saveProfiles(){await chrome.storage.local.set({profiles});}
+let nestedSaveQueue=Promise.resolve();
+function saveNestedMenu(profile){
+  const model=structuredClone(profile.nestedMenu);
+  const operation=nestedSaveQueue.catch(()=>{}).then(async()=>{
+    const stored=(await chrome.storage.local.get("profiles")).profiles || [];
+    const remote=stored.find(p=>p.id===profile.id);
+    if(!remote)throw new Error("This destination was removed. Refresh settings.");
+    const unchanged=JSON.stringify(remote.nestedMenu)===JSON.stringify(model);
+    remote.nestedMenu=model;
+    // Folder creation may provision a bucket worker. Keep its current credentials
+    // and any newly added Explorer profiles when the existing autosave runs.
+    for(const latest of stored){
+      const local=profiles.find(p=>p.id===latest.id);
+      if(!local && latest.explorerManaged)profiles.push(latest);
+      if(local)for(const key of ["workerUrl","workerVersion","token","publicBaseUrl","scriptName"])
+        if(latest[key]!==undefined)local[key]=latest[key];
+    }
+    if(!unchanged)await chrome.storage.local.set({profiles:stored});
+  });
+  nestedSaveQueue=operation;return operation;
+}
 function displayName(p){return p.name||p.bucketName||p.repository||"Destination";}
 let saveTimer=null;
 function scheduleSave(){
@@ -166,7 +187,7 @@ function renderTree(profile){
         {id:uid(),label:"Videos",category:"videos",prefix:"videos",path:"assets/videos",children:[]},
         {id:uid(),label:"Files",category:"files",prefix:"files",path:"assets/files",children:[]}
       ];
-      ensureProfileMenuPrefixes(profile, leafMenuPrefixes(profile.menuTree)).catch(()=>{});
+      if(profile.type!=="cloudflare-r2")ensureProfileMenuPrefixes(profile, leafMenuPrefixes(profile.menuTree)).catch(()=>{});
     }
     scheduleSave();
     renderProfiles();
@@ -482,17 +503,19 @@ function renderProfiles(){
     remove.addEventListener("click",()=>{profiles=profiles.filter(x=>x.id!==p.id);renderProfiles();saveProfiles();});
     actions.append(up,down,remove);
 
-    card.append(top,grid,actions,renderTree(p));
+    card.append(top,grid,actions);
+    if(p.type!=="cloudflare-r2")card.append(renderTree(p));
     root.append(card);
   });
 
   renderWorkspaceProfiles();
   for (const profile of visibleProfiles) {
-    ensureProfileMenuPrefixes(profile, leafMenuPrefixes(profile.menuTree)).catch(()=>{});
+    if(profile.type!=="cloudflare-r2")ensureProfileMenuPrefixes(profile, leafMenuPrefixes(profile.menuTree)).catch(()=>{});
     if (profile.type==="cloudflare-r2" && profile.defaultPrefix)
       ensureProfileMenuPrefixes(profile,[profile.defaultPrefix]).catch(()=>{});
   }
   scheduleSave();
+  RedownNestedEditor.mount($("nested-profiles"),{profiles:()=>profiles,save:saveNestedMenu,send});
 }
 
 function defaultLocationField(profile){

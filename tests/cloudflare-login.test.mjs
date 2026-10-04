@@ -7,6 +7,7 @@ import test from 'node:test';
 const source = await readFile(new URL('../extension/background.js', import.meta.url), 'utf8');
 const authSource = await readFile(new URL('../extension/cloudflare-auth.js', import.meta.url), 'utf8');
 const apiSource = await readFile(new URL('../extension/cloudflare-api.js', import.meta.url), 'utf8');
+const nestedSource = await readFile(new URL('../extension/nested-locations.js', import.meta.url), 'utf8');
 const optionsSource = await readFile(new URL('../extension/options.js', import.meta.url), 'utf8');
 function event() {
   const listeners = [];
@@ -68,6 +69,7 @@ function harness(shared = {}) {
   });
   context.importScripts = path => {
     if (path === 'cloudflare-auth.js') vm.runInContext(authSource, context);
+    else if(path === 'nested-locations.js')vm.runInContext(nestedSource,context);
     else { assert.equal(path, 'cloudflare-api.js'); vm.runInContext(apiSource, context); }
   };
   if (shared.withoutBackground) vm.runInContext(authSource, context);
