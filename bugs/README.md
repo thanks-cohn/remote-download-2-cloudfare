@@ -177,3 +177,27 @@ The issue appears **section-specific**: some ReDown panels continue to function 
 - Test after restarting Chrome and after access-token expiration, including mixed-section usage, concurrent requests, absent refresh tokens, revoked refresh tokens, and permission failures.
 
 **Relevant code:** `extension/cloudflare-auth.js`, `extension/cloudflare-api.js` (including the literal error), `extension/options.js` `refreshCloudflare()`, and Cloudflare operations in `extension/background.js`.
+
+
+## BUG-010 — Simple and Nested menu settings should share one unified section
+
+**Status:** Open · user-requested UI/UX refinement
+
+The right-click menu settings currently make **Simple** and **Nested** feel like separate sections. Instead, provide a single **Right-click menu** settings area with two side-by-side checkable mode choices at its top:
+
+- **☑ Use Simple Menu**    **☐ Use Nested Menu**
+- Selecting **Nested Menu** changes the selection to **☐ Use Simple Menu**    **☑ Use Nested Menu**.
+
+These should look like checkmarked options, but behave as **one active choice** (mutually exclusive), not two independently active menus. The corresponding configuration editor appears directly beneath the choices in the **same section**, rather than being presented as an unrelated second area.
+
+**Expected behavior:** A tidy, unified settings page where the user chooses which right-click menu to use and edits that mode immediately below the selector. Switching modes does not discard either mode's saved destinations.
+
+**Acceptance criteria:**
+- Display **Use Simple Menu** and **Use Nested Menu** side by side at the top of the unified Right-click menu section.
+- Both choices have clear checked/unchecked states; only one mode can be active at a time.
+- Show the active mode's configuration under the same heading, hiding the inactive editor without clearing its data.
+- Switching is immediate, accessible via keyboard, and persisted across settings reloads and browser sessions.
+- Eliminate redundant scattered mode controls, duplicated headings, and separate Simple/Nested sections, while retaining all destination-editing functionality.
+- Remain usable on smaller windows with sensible wrapping.
+
+**Relevant code:** `extension/options.html`, `extension/options.js` (`renderRightClickMode()`, `renderProfiles()`), `extension/nested-menu-editor.js`; existing `rightClickMode` storage.
