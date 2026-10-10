@@ -280,3 +280,31 @@ In the **Nested · Cloudflare locations** editor, the user selects bucket `exten
 **Relevant code:** `extension/nested-menu-editor.js` `folderRow()`, `rootRow()`, `repaint()`; `extension/background.js` `listFolderChildren()`, `cfFolderChildren`; `extension/nested-locations.js` `path()` and `setLocation()`.
 
 **Evidence:** User screenshot provided October 10, 2026, showing `extended` bucket → `extended` folder → `animeplex.lol` → unassigned child dropdown.
+
+
+## BUG-013 — Upload from Computer child-folder dropdown omits or fails to load existing subfolders
+
+**Status:** Open · screenshot-supported user report; separate from right-click nested menu BUG-012
+
+In **Upload from computer**, after choosing the Cloudflare R2 bucket `works`, the user reports that the successive **Location / + Child** dropdowns do not reliably enumerate the real immediate child folders. Only one or a few options appear, and deeper existing folders may be unavailable even though the user expects them in R2. The screenshot shows the root selection `Komochi_Tsuma_no_Arai-san_Arai-san_a_wife_with_a_child`, then `chapter_1`, a second input also containing `chapter_1`, and an additional empty **Choose an existing child…** row. This is **not** the same panel as the nested right-click menu; do not treat fixing BUG-012 as sufficient.
+
+**Expected behavior:** Selecting bucket `works` displays *all* actual top-level folders in that bucket. Selecting a parent folder then lists all its immediate existing children from R2; the next level is scoped to that exact parent path. Existing-folder selection is separate from the new-folder text field. The UI must honestly indicate loading, incomplete results, and errors rather than showing a partial list as complete.
+
+**Code-level investigation points:**
+- `extension/options.js`: `fetchUploadBuilderChildren()` requests `cfFolderChildren` with `limit:250` but silently returns `[]` on a failed response; this can make an authorization or API error look like an empty folder.
+- `uploadBuilderChildren()` derives entries from cached `uploadLocationPrefixes` and may show previously cached entries while the live request is still pending.
+- `renderUploadLocationBuilder()` asynchronously populates dropdown options; investigate stale requests, bucket changes, and whether previous selections/new-folder drafts are being displayed as separate path levels.
+- `extension/background.js` `listFolderChildren()` loops through R2 delimiter/cursor pages but stops at the requested limit; check missing subfolders, folder-marker representation, and whether the provider returns all prefixes.
+- The screenshot does **not** prove Cloudflare connectivity is broken or that all expected child folders exist remotely. Compare actual R2 object keys and directory markers before assigning the root cause.
+
+**Acceptance criteria:**
+- List immediate child folders accurately under the selected account/bucket/parent prefix, including directories represented only by deeper object keys and folders with marker objects.
+- Fetch additional result pages as needed and show a clear **Loading folders…** / **Loading more folders…** indicator. If results are capped, label them as incomplete and offer further loading.
+- Expose per-row fetch failures and a **Retry** action; distinguish empty folder from authorization/Worker/API error instead of silently returning an empty list.
+- Ensure asynchronous results from a previous bucket or parent cannot overwrite the new selection.
+- Selecting an existing folder does not copy its name into **Create new child** input or produce an unintended duplicate path segment.
+- Ensure an empty child row does not create a folder, and upload destination always reflects the exact selected hierarchy.
+- Test with a bucket containing many siblings (more than 250), deep folders (3+ levels), and with temporary Cloudflare failures.
+- Preserve the layout improvement from BUG-003 without reintroducing overflow at 1366×768.
+
+**Evidence:** User screenshot October 10, 2026 of Upload from Computer showing `works` and a partly populated multi-level location builder.
