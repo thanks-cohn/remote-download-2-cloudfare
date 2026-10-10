@@ -258,3 +258,25 @@ The user can right-click media and send it to a REDOWN destination from ordinary
 - Confirm whether the user's failure occurs before transfer begins, during source fetch, or during Cloudflare upload; document the exact cause once reproduced.
 
 **Relevant code:** `extension/background.js` `selectedUrl()`, `categoryForContext()`, `checkedFetch()`, remote ingest and error recording; Downloads error surface in `extension/options.js`.
+
+
+## BUG-012 — Nested destination dropdowns show incorrect folder hierarchy or omit children
+
+**Status:** Open · screenshot-supported user report; exact cause not yet reproduced
+
+In the **Nested · Cloudflare locations** editor, the user selects bucket `extended` and clicks **+ Child**, but the first child selection offers `extended` again rather than the immediate folders they expect under the bucket. A further level offers `animeplex.lol`, and the next dropdown does not show the expected children of that folder. The displayed path becomes `extended/extended/animeplex.lol/`, apparently introducing an unwanted duplicate level. The screenshot shows an unassigned final child row. We must confirm the actual R2 keys/folder markers before deciding whether the duplicate is a real folder, stale saved configuration, or a discovery/path bug.
+
+**Expected behavior:** The bucket is selected once as the root. Every **+ Child** dropdown lists only the immediate existing folders under the exact selected parent prefix, without inserting or suggesting a duplicate bucket name unless that is genuinely an existing folder. For example, `extended` bucket → `animeplex.lol` → actual children inside `animeplex.lol/`. Creation of a new folder must remain a separate explicit action.
+
+**Acceptance criteria:**
+- Query immediate folders under the bucket's empty prefix for the first child; under `animeplex.lol/` for its child; and so on at arbitrary depth.
+- Do not mistake the bucket name for a folder name, prepend an extra `extended/`, or list top-level buckets in child selectors.
+- Differentiate a genuine same-named folder (if R2 actually contains `extended/`) from an accidental duplicate; never silently modify or delete existing R2 data.
+- On selecting a parent, update descendants using its correct full prefix, preserve the selection and typed drafts, and show loading/errors explicitly.
+- Verify with actual R2 directory prefixes, existing marker objects, and folders represented only by object keys; test three or more depths.
+- Ensure saved nested-menu paths match the dropdown hierarchy and right-click destinations.
+- Test together with BUG-004 (full-editor rerenders) because asynchronous fetching and rerenders could cause stale or misleading child options.
+
+**Relevant code:** `extension/nested-menu-editor.js` `folderRow()`, `rootRow()`, `repaint()`; `extension/background.js` `listFolderChildren()`, `cfFolderChildren`; `extension/nested-locations.js` `path()` and `setLocation()`.
+
+**Evidence:** User screenshot provided October 10, 2026, showing `extended` bucket → `extended` folder → `animeplex.lol` → unassigned child dropdown.
