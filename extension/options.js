@@ -472,6 +472,36 @@ async function chooseRightClickMode(nextMode){
 $("use-simple-menu").addEventListener("change",()=>chooseRightClickMode("simple"));
 $("use-nested-menu").addEventListener("change",()=>chooseRightClickMode("nested"));
 
+function simpleExtraOptions(profile){
+  const wrap=document.createElement("div");
+  wrap.className="card";
+  const heading=document.createElement("div");
+  heading.className="section-head";
+  const intro=document.createElement("div");
+  const title=document.createElement("strong");title.textContent="Additional Simple menu options";
+  const note=document.createElement("div");note.className="meta";note.textContent="Each option is another right-click destination inside this same Cloudflare bucket. Paths are relative to the bucket root.";
+  intro.append(title,note);
+  const add=document.createElement("button");add.type="button";add.className="ghost";add.textContent="+ Add New Option";
+  heading.append(intro,add);
+  const rows=document.createElement("div");
+  const options=profile.simpleOptions ||= [];
+  function addRow(item){
+    const row=document.createElement("div");row.className="grid two";
+    const label=field("Menu option label",item.label||"",v=>{item.label=v;scheduleSave();},"text","e.g. Artwork");
+    const prefix=field("Location inside bucket",item.prefix||"",v=>{item.prefix=v.replace(/^\\/+|\\/+$/g,"");scheduleSave();},"text","e.g. images/portraits");
+    const remove=document.createElement("button");remove.type="button";remove.className="danger";remove.textContent="Remove option";
+    remove.addEventListener("click",()=>{const index=options.indexOf(item);if(index>=0)options.splice(index,1);row.remove();saveProfiles();});
+    row.append(label,prefix,remove);rows.append(row);
+  }
+  for(const item of options)addRow(item);
+  add.addEventListener("click",()=>{
+    const item={id:uid(),label:"New destination",prefix:""};
+    options.push(item);addRow(item);saveProfiles();
+    rows.lastElementChild?.querySelector("input")?.focus();
+  });
+  wrap.append(heading,rows);
+  return wrap;
+}
 function renderProfiles(){
   renderRightClickMode();
   const root=$("profiles");
@@ -535,7 +565,8 @@ function renderProfiles(){
     actions.append(up,down,remove);
 
     card.append(top,grid,actions);
-    if(p.type!=="cloudflare-r2")card.append(renderTree(p));
+    if(p.type==="cloudflare-r2")card.append(simpleExtraOptions(p));
+    else card.append(renderTree(p));
     root.append(card);
   });
 
