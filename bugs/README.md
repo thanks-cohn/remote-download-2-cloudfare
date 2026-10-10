@@ -93,7 +93,7 @@ The Cloudflare **Simple** right-click preset editor exposes one default-location
 
 ## BUG-006 — Explorer file list expands downward instead of paginating in a bounded scroll area
 
-**Status:** Open · user-reported layout defect / source-confirmed load-more behavior
+**Status:** Implemented on default branch (2026-10-10); awaiting installed-Chrome verification, especially large R2 cursor results and keyboard selection
 
 Explorer visually extends farther and farther down the settings page as file rows accumulate. The current `renderFileItems()` slices by `explorerVisibleLimit` and increases that limit on **Show more**, appending additional rows instead of replacing a numbered page. The actual viewport/scroll CSS impact still requires browser verification.
 
@@ -224,3 +224,9 @@ These should look like checkmarked options, but behave as **one active choice** 
 Updated `extension/options.html` upload-path CSS to bound rows to their parent width, use flexible min-width-zero selection/input columns, stack the new-child input below the existing-child dropdown, constrain indentation, and keep action buttons in fixed-width columns. Commit `78aaa0f`. This is a stylesheet-only change; no remote directory operations were changed. Visual confirmation in the installed extension remains necessary, especially at 1366×768 and several child levels.
 
 **Pause point:** The next remaining Explorer pagination task (BUG-006) is more substantial because it interacts with remote cursor pages, sorting, selection, keyboard navigation, and current load-more state. Do not treat it as a pure CSS change.
+
+### October 10 — BUG-006 pagination implementation
+
+Replaced the cumulative `Show more` rendering in `extension/options.js` with 25/50/100 entry page sizes (50 by default), Previous/Next controls, visible-range count, and page navigation that replaces rather than appends rendered rows. `extension/options.html` now contains a pagination footer and CSS for bounded internal file-list scrolling. Changing folders/search resets the page; selecting a file can navigate to its containing loaded page. Next loads additional R2 cursor batches when necessary (bounded to 20 additional batches per click). Source changes: `1d9e108`, `dafdbf3`, `5745d68`.
+
+**Manual verification required before closing:** At 1366×768, test 25/50/100 entries per page; check scrolling, buttons, folder transitions, sorting, keyboard selection, multi-select, search, archive contents, Downloads-to-Explorer jumps, and remote folders containing more entries than an initial R2 cursor response. File counts are counts of loaded items (a `+` indicates more available), not a guaranteed total until all remote results are fetched. This does not implement server-side global sorting of all unseen R2 objects.
