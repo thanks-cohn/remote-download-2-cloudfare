@@ -2225,29 +2225,60 @@ function renderFileItems() {
     }
     size.value=String(explorerPageSize);
     size.addEventListener("change",()=>{explorerPageSize=Number(size.value);explorerPage=0;renderFileItems();root.scrollTop=0;});
-    const prev=document.createElement("button");
-    prev.type="button";prev.textContent="← Previous";prev.disabled=explorerPage===0;
-    prev.addEventListener("click",()=>{explorerPage--;renderFileItems();root.scrollTop=0;});
-    const next=document.createElement("button");
-    next.type="button";next.textContent="Next →";
-    next.disabled=(explorerPage+1)*explorerPageSize>=all.length && (!explorerNextCursor || explorerSearchActive);
-    next.addEventListener("click",async()=>{
-      if((explorerPage+1)*explorerPageSize>=sortedVisibleItems().length && explorerNextCursor && !explorerSearchActive){
-        next.disabled=true;next.textContent="Loading…";
-        // A remote cursor batch can be smaller than one UI page.
-        // Fetch until the next page is reachable or R2 has no more objects.
+    const goPage=async(page)=>{
+      if(page<0)return;
+      const required=(page*explorerPageSize)+1;
+      if(required>sortedVisibleItems().length && explorerNextCursor && !explorerSearchActive){
         let attempts=0;
-        while(explorerNextCursor && (explorerPage+1)*explorerPageSize>=sortedVisibleItems().length && attempts++<20){
+        while(explorerNextCursor && required>sortedVisibleItems().length && attempts++<20){
           const cursor=explorerNextCursor;
           await browseWorkspace({append:true});
           if(cursor===explorerNextCursor)break;
         }
       }
-      if((explorerPage+1)*explorerPageSize<sortedVisibleItems().length){explorerPage++;renderFileItems();root.scrollTop=0;}
-    });
-    const number=document.createElement("span");
-    number.textContent=`Page ${explorerPage+1}${explorerNextCursor&&!explorerSearchActive ? " (more available)" : ` of ${pageCount}`}`;
-    pager.append(label,size,prev,number,next);
+      if(page*explorerPageSize<sortedVisibleItems().length || (page===0 && !sortedVisibleItems().length)){
+        explorerPage=page;
+        renderFileItems();
+        root.scrollTop=0;
+      }else renderFileItems();
+    };
+    const nav=document.createElement("nav");
+    nav.className="explorer-page-numbers";
+    nav.setAttribute("aria-label","Explorer pages");
+    const makeButton=(caption,page,disabled=false)=>{
+      const button=document.createElement("button");
+      button.type="button";
+      button.textContent=caption;
+      button.disabled=disabled;
+      button.setAttribute("aria-label",caption==="‹"?"Previous page":caption==="›"?"Next page":`Page ${page+1}`);
+      if(page===explorerPage && /^\\d+$/.test(String(caption))){
+        button.classList.add("active");
+        button.setAttribute("aria-current","page");
+      }
+      button.addEventListener("click",()=>goPage(page));
+      nav.append(button);
+    };
+    const addGap=()=>{const gap=document.createElement("span");gap.className="explorer-page-gap";gap.textContent="…";gap.setAttribute("aria-hidden","true");nav.append(gap);};
+    makeButton("‹",explorerPage-1,explorerPage===0);
+    const pages=new Set([0,1,2,explorerPage-1,explorerPage,explorerPage+1,pageCount-1]);
+    const visible=[...pages].filter(page=>page>=0 && page<pageCount).sort((a,b)=>a-b);
+    let last=-1;
+    for(const page of visible){
+      if(last>=0 && page-last>1)addGap();
+      makeButton(String(page+1),page);
+      last=page;
+    }
+    // R2 cursors don't expose the ultimate number of pages.
+    // Display the last loaded page, plus a forward arrow while more data exists.
+    const canAdvance=(explorerPage+1)*explorerPageSize<all.length || Boolean(explorerNextCursor&&!explorerSearchActive);
+    makeButton("›",explorerPage+1,!canAdvance);
+    pager.append(label,size,nav);
+    if(explorerNextCursor&&!explorerSearchActive){
+      const note=document.createElement("span");
+      note.className="explorer-page-hint";
+      note.textContent="More pages available";
+      pager.append(note);
+    }
   }
   root.oncontextmenu = (e) => {
     if (e.target === root || e.target.closest(".file-empty")) {
