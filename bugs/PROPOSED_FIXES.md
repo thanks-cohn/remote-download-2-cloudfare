@@ -53,3 +53,37 @@ Each **+ Child** control adds the next path level and shows only immediate exist
 - `extension/options.html`: location dropdown layout and loading/error feedback.
 
 **Scope:** This proposal concerns **Upload from Computer**, not the separate Nested right-click menu editor (BUG-012).
+
+## BUG-004 — Preserve nested editor DOM and update only the affected branch
+
+**Status:** Proposed · issue persists as of October 10, 2026
+
+**Observed:** Clicking **+ Child** in the Nested right-click menu editor causes the entire panel to disappear/rebuild, disrupting selection, focus, scroll position, and parent rows.
+
+**Confirmed code cause:** `extension/nested-menu-editor.js` invokes `render(context.profiles())` in the `run()` `finally` handler and `rerender()` within child-add/select handlers. `render()` calls `container.replaceChildren()`, recreating all profiles, roots and nested controls. CSS cannot retain DOM elements deleted by JavaScript.
+
+**Proposed fix:**
+- Keep stable DOM nodes keyed by profile/root/node ID. **+ Child** inserts only the new child row inside the relevant parent's existing `.nested-children` container, rather than rebuilding every row.
+- Selecting a parent updates only that node and dependent descendants; untouched ancestors and siblings retain node identity, selection, focus, typed draft, collapsed state, and scroll.
+- Separate save completion from UI redraw: a successful `context.save(profile)` must not call a global `render()` automatically. Do a full render only after initial mount or unavoidable structural changes.
+- Fetch folder choices by exact account/bucket/prefix. Indicate loading/errors on only the affected row. Ignore stale async results when the parent changes.
+- Prefer keyed DOM reconciliation where several nodes genuinely need changes; CSS handles layout, not state preservation.
+- Test repeated `+ Child` operations at 3+ levels, two accounts with expanded branches, slow R2 responses, concurrent typing, and user keyboard focus.
+
+**UI wording:** The checkbox now reads **Show this account in the Nested right-click menu**. Checked means this account's configured nested destinations may appear in that menu; unchecked preserves its configuration without showing it. This wording change was implemented separately and does not solve the editor reset.
+
+## BUG-005 — Add multiple independent Simple right-click menu options
+
+**Status:** Proposed · implementation pending
+
+**Observed:** Simple Mode offers a default location on a profile, but no obvious **+ Add New Option** action analogous to Nested Mode's **+ Add bucket**.
+
+**Desired behavior:**
+- Add a visible **+ Add New Option** button in Simple Mode, with the ability to create several distinct right-click destination entries for the same Cloudflare account or bucket.
+- Each option has its own display label and path, and uses the same verified bucket/folder selection rules as other location pickers.
+- Add/remove/reorder one option without disturbing other configured options; removal changes menu configuration only and never deletes remote R2 objects.
+- Use stable IDs and backward-compatible migration from existing Simple destination profiles.
+- Keep Simple fast and approachable; do not depend on the Premium RFIS JSON/history engine.
+- Test new options appearing in the actual right-click menu after save and Chrome background menu refresh; confirm no duplicate or stale entries.
+
+**Note:** Both proposals apply to right-click menu settings, not to the separate Upload from Computer panel (BUG-013).
