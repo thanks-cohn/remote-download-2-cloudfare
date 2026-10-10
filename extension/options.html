@@ -232,15 +232,20 @@
     <div class="section-head">
       <div><h2>Right-click presets</h2><div class="section-note">Choose a direct destination in Simple, or build a location hierarchy in Nested.</div></div>
     </div>
-    <div class="right-click-mode">
-      <label class="toggle"><input id="use-nested-menu" type="checkbox" aria-describedby="right-click-mode-status">Use nested menu</label>
-      <div id="right-click-mode-status" class="meta" role="status">Simple is active. Check to use Nested instead.</div>
+    <div class="right-click-mode" style="display:flex;flex-wrap:wrap;gap:12px;align-items:center">
+      <label class="toggle"><input id="use-simple-menu" type="checkbox" aria-describedby="right-click-mode-status">Use Simple Menu</label>
+      <label class="toggle"><input id="use-nested-menu" type="checkbox" aria-describedby="right-click-mode-status">Use Nested Menu</label>
     </div>
-    <h3>Simple · Quick send</h3>
-    <div id="profiles"></div>
-    <div id="profiles-empty" class="empty">No destinations yet. Connect Cloudflare or add GitHub above.</div>
-    <div class="nested-section-head"><h3>Nested · Cloudflare locations</h3><p>Select existing buckets and folders. Create adds a new location at that row’s level; + Child adds a row inside the selected location.</p></div>
-    <div id="nested-profiles"></div>
+    <div id="right-click-mode-status" class="meta" role="status" style="margin-bottom:12px"></div>
+    <div id="simple-menu-editor">
+      <h3>Simple · Quick send</h3>
+      <div id="profiles"></div>
+      <div id="profiles-empty" class="empty">No destinations yet. Connect Cloudflare or add GitHub above.</div>
+    </div>
+    <div id="nested-menu-editor-panel" hidden>
+      <div class="nested-section-head"><h3>Nested · Cloudflare locations</h3><p>Select existing buckets and folders. Create adds a new location at that row’s level; + Child adds a row inside the selected location.</p></div>
+      <div id="nested-profiles"></div>
+    </div>
   </section>
 
   <section id="local-tools" class="section" hidden>
