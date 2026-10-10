@@ -472,6 +472,55 @@ async function chooseRightClickMode(nextMode){
 $("use-simple-menu").addEventListener("change",()=>chooseRightClickMode("simple"));
 $("use-nested-menu").addEventListener("change",()=>chooseRightClickMode("nested"));
 
+function simplePrimaryLocationField(profile){
+  const wrap=document.createElement("div");wrap.className="default-location-builder";
+  const label=document.createElement("label");label.textContent="Bucket and location";
+  const fields=document.createElement("div");fields.className="location-levels";
+  const bucket=document.createElement("select");bucket.setAttribute("aria-label","Bucket for default Simple destination");
+  const children=document.createElement("div");children.className="location-levels";
+  const status=document.createElement("div");status.className="meta";
+  fields.append(bucket,children);wrap.append(label,fields,status);
+  let version=0;
+  const option=(select,value,text)=>{const o=document.createElement("option");o.value=value;o.textContent=text;select.append(o);};
+  async function paint(){
+    const token=++version;
+    children.replaceChildren();
+    const parts=String(profile.defaultPrefix||"").split("/").filter(Boolean);
+    const currentBucket=profile.simpleBucketName||profile.bucketName;
+    async function appendLevel(index,parent){
+      if(token!==version||!wrap.isConnected)return;
+      const sel=document.createElement("select");sel.disabled=true;option(sel,"","Loading folders…");children.append(sel);
+      const res=await send({type:"cfFolderChildren",accountId:profile.accountId,bucketName:currentBucket,parentPrefix:parent.join("/"),limit:100000}).catch(e=>({ok:false,error:e.message}));
+      if(token!==version||!wrap.isConnected)return;
+      sel.replaceChildren();
+      if(!res?.ok){option(sel,"","Folder lookup unavailable");status.textContent=res?.error||"Could not load folders.";return;}
+      option(sel,"",index===0?"/ (bucket root)":"Choose child folder…");
+      for(const name of res.children||[])option(sel,name,name);
+      sel.value=parts[index]||"";
+      if(parts[index]&&!Array.from(sel.options).some(o=>o.value===parts[index])){sel.value="";profile.defaultPrefix=parent.join("/");scheduleSave();status.textContent="Previous folder not found in selected bucket.";}
+      sel.disabled=false;
+      sel.addEventListener("change",()=>{
+        profile.defaultPrefix=[...parent,...(sel.value?[sel.value]:[])].join("/");
+        scheduleSave();paint();
+      });
+      if(sel.value)await appendLevel(index+1,[...parent,sel.value]);
+    }
+    await appendLevel(0,[]);
+  }
+  bucket.addEventListener("change",()=>{profile.simpleBucketName=bucket.value;profile.defaultPrefix="";scheduleSave();paint();});
+  (async()=>{
+    bucket.disabled=true;option(bucket,"","Loading buckets…");
+    const res=await send({type:"cfBuckets",accountId:profile.accountId}).catch(e=>({ok:false,error:e.message}));
+    if(!wrap.isConnected)return;
+    bucket.replaceChildren();
+    if(!res?.ok){option(bucket,"",res?.error||"Bucket lookup failed");return;}
+    for(const name of (res.buckets||[]).map(b=>b.name))option(bucket,name,name);
+    bucket.value=profile.simpleBucketName||profile.bucketName;
+    bucket.disabled=false;
+    await paint();
+  })();
+  return wrap;
+}
 function simpleExtraOptions(profile){
   const wrap=document.createElement("div");
   wrap.className="card";
@@ -617,7 +666,7 @@ function renderProfiles(){
     grid.append(
       field("Menu label",p.menuLabel||p.name||"",v=>p.menuLabel=v),
       p.type==="cloudflare-r2"
-        ? defaultLocationField(p)
+        ? simplePrimaryLocationField(p)
         : field("Default path",p.defaultPath||"assets/files",v=>p.defaultPath=v),
       field("Order",String(p.menuOrder??index),v=>p.menuOrder=Number(v)||0,"number")
     );
