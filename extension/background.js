@@ -1704,7 +1704,10 @@ chrome.contextMenus.onClicked.addListener(async info => {
       const prefix=String(item.prefix||"").replace(/^\/+|\/+$/g,"");
       if(prefix.split("/").some(part=>part==="."||part===".."||part.includes("\\\\")))
         throw new Error("This destination has an invalid path. Edit it in Settings.");
-      const location=await ingestCloudflareAtPrefix(profile,sourceUrl,prefix,basenameFromUrl(sourceUrl));
+      const selectedBucket=item.bucketName||profile.bucketName;
+      const destinationProfile=profiles.find(p=>p.type==="cloudflare-r2" && p.accountId===profile.accountId && p.bucketName===selectedBucket);
+      if(!destinationProfile)throw new Error("Selected bucket is not prepared for ReDown transfers. Prepare it in Cloudflare settings first.");
+      const location=await ingestCloudflareAtPrefix(destinationProfile,sourceUrl,prefix,basenameFromUrl(sourceUrl));
       await recordTransfer({ok:true,sourceUrl,profileId:profile.id,profileName:profile.name,category:"files",location});
       await notify("REDOWN complete",location);
     }catch(error){
