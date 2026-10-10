@@ -349,9 +349,10 @@
 
   <section class="section">
     <div class="section-head">
-      <div><h2>File identity index (preview)</h2><div class="section-note">ReDown remembers files discovered while browsing Cloudflare R2. This is a partial index, not a complete bucket scan.</div></div>
+      <div><h2>Premium file index (experimental)</h2><div class="section-note">Optional preview of RFIS. Basic ReDown does not require this rich index. When enabled, ReDown records R2 listing observations locally; this is not a complete bucket scan.</div></div>
       <button id="rfis-export" class="ghost">Export index JSON</button>
     </div>
+    <label style="display:flex;align-items:center;gap:8px;margin-bottom:10px"><input id="rfis-preview-enable" type="checkbox" style="width:auto" /> Enable experimental rich-index preview on this browser</label>
     <div id="rfis-status" class="status" role="status" aria-live="polite"></div>
   </section>
 
