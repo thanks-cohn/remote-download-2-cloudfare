@@ -56,7 +56,7 @@ Each **+ Child** control adds the next path level and shows only immediate exist
 
 ## BUG-004 — Preserve nested editor DOM and update only the affected branch
 
-**Status:** Proposed · issue persists as of October 10, 2026
+**Status:** Initial targeted-DOM fix committed October 10, 2026; Chrome verification pending. Folder-selection flows still need regression testing.
 
 **Observed:** Clicking **+ Child** in the Nested right-click menu editor causes the entire panel to disappear/rebuild, disrupting selection, focus, scroll position, and parent rows.
 
@@ -74,7 +74,7 @@ Each **+ Child** control adds the next path level and shows only immediate exist
 
 ## BUG-005 — Add multiple independent Simple right-click menu options
 
-**Status:** Proposed · implementation pending
+**Status:** Initial additional-option UI and context-menu routing committed October 10, 2026; Chrome verification pending. A verified-folder picker and reorder controls remain future improvements.
 
 **Observed:** Simple Mode offers a default location on a profile, but no obvious **+ Add New Option** action analogous to Nested Mode's **+ Add bucket**.
 
