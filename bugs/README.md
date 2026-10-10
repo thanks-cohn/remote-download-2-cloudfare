@@ -234,3 +234,27 @@ Replaced the cumulative `Show more` rendering in `extension/options.js` with 25/
 ### October 10 — Numbered Explorer pages refinement
 
 Explorer footer now uses **‹ 1 2 3 … [current-page neighborhood] … [last loaded page] ›** instead of only Previous/Next text buttons. Current page is highlighted; page-size choices remain 25/50/100. When an R2 continuation cursor exists, the true final page is unknown, so the final numbered button represents the **last loaded page**, with a **More pages available** indicator and forward navigation fetching more batches. Do not label that as the ultimate last page until the cursor is exhausted. Implementation commits `818652e` and `bd60fa3`. Manual installed-Chrome validation remains pending.
+
+
+## BUG-011 — Right-click video transfers fail on some websites
+
+**Status:** Open · user-reported site-specific compatibility; root cause unverified
+
+The user can right-click media and send it to a REDOWN destination from ordinary websites (including 4chan), but reports that videos from `watchpeoplelive.tv` do not transfer successfully. It is not yet known whether the site exposes a direct media URL, whether the video uses HLS/DASH segments or browser `blob:` URLs, or whether the source enforces access restrictions. Do not characterize the failure as a Cloudflare permission problem without evidence.
+
+**Source observations:**
+- `extension/background.js` selects `info.srcUrl || info.linkUrl || info.pageUrl` as the source, and recognizes `info.mediaType === "video"` when categorizing files.
+- The remote-ingest fetch path expects an accessible public HTTPS URL and may reject a failed HTTP response, a missing response body, private/insecure addresses, or files beyond configured size limits.
+- Some embedded players provide a playlist, segmented stream, expiring signed URL, or `blob:` reference rather than a standalone downloadable video. Source-side session, Referer, anti-hotlink, or authorization requirements are also possible. These are hypotheses, not confirmed findings for the named website.
+
+**Expected behavior:** REDOWN distinguishes direct downloadable media files from embedded/segmented/unsupported streams, succeeds on publicly accessible media where possible, and reports a specific, accurate reason for failure instead of implying a Cloudflare permission fault.
+
+**Acceptance criteria:**
+- Reproduce using a permitted, non-DRM video from an ordinary direct-file site and a failing embedded-video site; record the context menu input (`mediaType`, URL scheme, file extension only), HTTP status, and which stage fails without logging access tokens or sensitive signed query parameters.
+- Detect `blob:`, non-HTTPS, HLS `.m3u8`, and DASH `.mpd` URLs, and distinguish them from ordinary `.mp4` / `.webm` transfers.
+- Preserve working downloads from straightforward image/video hosts.
+- Show a meaningful failure message for inaccessible, signed-expired, 401/403, segmented-stream, oversized, or unsupported sources.
+- If implementing support for an authorized, unprotected segmented-media source, separately design assembly, size/time/cost limits, consent, and streaming behavior. Do not bypass DRM, authentication, or site access controls.
+- Confirm whether the user's failure occurs before transfer begins, during source fetch, or during Cloudflare upload; document the exact cause once reproduced.
+
+**Relevant code:** `extension/background.js` `selectedUrl()`, `categoryForContext()`, `checkedFetch()`, remote ingest and error recording; Downloads error surface in `extension/options.js`.
