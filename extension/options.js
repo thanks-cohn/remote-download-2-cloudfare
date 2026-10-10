@@ -1636,6 +1636,7 @@ async function runExplorerSearch(query) {
   }
 
   explorerSearchActive=true;
+  explorerPage=0;
   explorerSelected.clear();
   explorerAnchor=-1;
   explorerNextCursor="";
@@ -2233,9 +2234,14 @@ function renderFileItems() {
     next.addEventListener("click",async()=>{
       if((explorerPage+1)*explorerPageSize>=sortedVisibleItems().length && explorerNextCursor && !explorerSearchActive){
         next.disabled=true;next.textContent="Loading…";
-        const cursor=explorerNextCursor;
-        await browseWorkspace({append:true});
-        if(cursor===explorerNextCursor && (explorerPage+1)*explorerPageSize>=sortedVisibleItems().length){renderFileItems();return;}
+        // A remote cursor batch can be smaller than one UI page.
+        // Fetch until the next page is reachable or R2 has no more objects.
+        let attempts=0;
+        while(explorerNextCursor && (explorerPage+1)*explorerPageSize>=sortedVisibleItems().length && attempts++<20){
+          const cursor=explorerNextCursor;
+          await browseWorkspace({append:true});
+          if(cursor===explorerNextCursor)break;
+        }
       }
       if((explorerPage+1)*explorerPageSize<sortedVisibleItems().length){explorerPage++;renderFileItems();root.scrollTop=0;}
     });
