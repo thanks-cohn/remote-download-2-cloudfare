@@ -1649,6 +1649,15 @@ async function buildMenus() {
         contexts:["link","image","video","audio","page"]
       });
       addPresetTree(p, p.menuTree, parentId);
+    } else if(mode==='simple' && p.type==='cloudflare-r2' && Array.isArray(p.simpleOptions) && p.simpleOptions.length){
+      const contexts=["link","image","video","audio","page"];
+      const parentId=`simple:${p.id}`;
+      chrome.contextMenus.create({id:parentId,parentId:ROOT_MENU_ID,title,contexts});
+      chrome.contextMenus.create({id:`quick:${p.id}`,parentId,title:"Default location",contexts});
+      for(const item of p.simpleOptions){
+        if(!item?.id || typeof item.prefix!=="string" || !item.label?.trim())continue;
+        chrome.contextMenus.create({id:`simple-option:${p.id}:${item.id}`,parentId,title:item.label,contexts});
+      }
     } else {
       chrome.contextMenus.create({
         id:`quick:${p.id}`, parentId:ROOT_MENU_ID, title,
@@ -1685,6 +1694,26 @@ chrome.contextMenus.onClicked.addListener(async info => {
 
   const profiles = await getProfiles();
   const sourceUrl = selectedUrl(info);
+
+  const extraSimpleMatch=String(info.menuItemId).match(/^simple-option:([^:]+):([^:]+)$/);
+  if(extraSimpleMatch){
+    const profile=profiles.find(p=>p.id===extraSimpleMatch[1] && p.type==="cloudflare-r2");
+    const item=profile?.simpleOptions?.find(x=>x.id===extraSimpleMatch[2]);
+    if(!profile||!item)return notify("REDOWN","That Simple destination is no longer available.");
+    try {
+      const prefix=String(item.prefix||"").replace(/^\\/+|\\/+$/g,"");
+      if(prefix.split("/").some(part=>part==="."||part===".."||part.includes("\\\\")))
+        throw new Error("This destination has an invalid path. Edit it in Settings.");
+      const location=await ingestCloudflareAtPrefix(profile,sourceUrl,prefix,basenameFromUrl(sourceUrl));
+      await recordTransfer({ok:true,sourceUrl,profileId:profile.id,profileName:profile.name,category:"files",location});
+      await notify("REDOWN complete",location);
+    }catch(error){
+      const message=error?.message||String(error);
+      await recordTransfer({ok:false,sourceUrl,profileId:profile.id,profileName:profile.name,category:"files",error:message});
+      await notify("REDOWN failed",message);
+    }
+    return;
+  }
 
   const quickMatch = String(info.menuItemId).match(/^quick:([^:]+)$/);
   if (quickMatch) {
