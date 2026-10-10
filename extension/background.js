@@ -1701,7 +1701,7 @@ chrome.contextMenus.onClicked.addListener(async info => {
     const item=profile?.simpleOptions?.find(x=>x.id===extraSimpleMatch[2]);
     if(!profile||!item)return notify("REDOWN","That Simple destination is no longer available.");
     try {
-      const prefix=String(item.prefix||"").replace(/^\\/+|\\/+$/g,"");
+      const prefix=String(item.prefix||"").replace(/^\/+|\/+$/g,"");
       if(prefix.split("/").some(part=>part==="."||part===".."||part.includes("\\\\")))
         throw new Error("This destination has an invalid path. Edit it in Settings.");
       const location=await ingestCloudflareAtPrefix(profile,sourceUrl,prefix,basenameFromUrl(sourceUrl));
