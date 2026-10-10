@@ -87,3 +87,38 @@ Each **+ Child** control adds the next path level and shows only immediate exist
 - Test new options appearing in the actual right-click menu after save and Chrome background menu refresh; confirm no duplicate or stale entries.
 
 **Note:** Both proposals apply to right-click menu settings, not to the separate Upload from Computer panel (BUG-013).
+
+
+## October 10 — Destination editor dependency audit and follow-up
+
+**Report:** Nested destinations sometimes stop after two levels unless the user reselects the top bucket; Simple destination folder selection still rebuilds its selectors; Simple and Upload from Computer have incomplete new-location creation workflows. User wants editing to start from the existing saved context with no unnecessary bucket toggling.
+
+### Dependency map
+
+| Interface | What genuinely requires bucket identity | What does NOT require manual re-selection |
+| --- | --- | --- |
+| Nested right-click editor | Remote `cfBuckets` verification, `cfFolderChildren(accountId,bucketName,parentPrefix)`, `cfCreateFolder`, and context-menu destination generation | Editing a saved verified child, adding another descendant, expanding/collapsing a branch |
+| Simple right-click editor | Finding actual existing buckets and children; choosing the target Cloudflare account/bucket; selecting a prepared transfer profile for a different bucket | Re-selecting an already saved bucket before changing the menu label or extending its folder path |
+| Upload from Computer | The actual target account/bucket for uploads, listing existing children, and creating remote folders | Selecting the same bucket a second time inside the Location hierarchy |
+| Explorer | Current target account/bucket for listing/preview/action APIs | Choosing a new account/bucket each time the user opens an existing folder |
+
+**Code examined:** `extension/nested-menu-editor.js`, `extension/nested-locations.js`, `extension/options.js` (`simplePrimaryLocationField`, `simpleExtraOptions`, `renderUploadLocationBuilder`), `extension/background.js` (`cfBuckets`, `cfFolderChildren`, context menu routing, and transfer handling).
+
+### Confirmed implementation problems
+
+1. Nested `folderRow()` computed `node.ready = !node.needsSelection && known.includes(node.name)`. Once a child was marked `needsSelection`, even successful verification of the saved folder left it non-ready, disabling its `+ Child` button until another selection. **Initial fix committed**: a saved node is marked ready if its name is confirmed by the provider. Verify this in Chrome with a three-plus-level hierarchy.
+2. Simple `simplePrimaryLocationField()` and `simpleExtraOptions()` use `replaceChildren()` on selection changes. They should reconcile the changed path level and descendants only, retaining prior ancestors, focus, and sibling destination cards. **Still to implement**.
+3. Simple destination rows currently contain bucket and folder selectors, but no dedicated action to create a *folder* at the selected parent. `Make New Bucket` creates buckets, not directories. **Still to implement**.
+4. Upload from Computer hides the new-folder field on level zero and its plus action requires an existing top-level folder, blocking creation of a fresh root-level directory from the same picker. **Still to implement**.
+5. The selected bucket remains genuinely necessary as **data** for API calls, transfers, and provider verification. It does not need to be repeatedly selected by **a human**. Never remove underlying bucket identity or transfer-target checks to simplify the UX.
+6. Remote Cloudflare creation needs explicit confirmation, a visible progress/failure state, and refresh of only the affected bucket/parent and dropdowns. An empty option row alone should not create a remote object.
+
+### Acceptance criteria
+
+- Open a saved nested hierarchy and add children at depths 3, 4, and deeper without clicking any saved ancestor again.
+- Every verified saved bucket and folder is ready immediately after asynchronous validation, with no false `needsSelection` deadlock.
+- Changing a Simple folder touches only that row and its descendants; unrelated destination panels, labels, and scroll remain stable.
+- Both Simple Mode and Upload from Computer can create a new folder beneath the selected parent, including the bucket root, and then immediately select it.
+- Display the selected bucket by default. Changing it intentionally invalidates only dependent folder selections; none of the users must reselect the current bucket to edit their configured destinations.
+- Check actual right-click destination routing and upload paths after bucket and child changes; never send to the wrong account/bucket.
+- Never conflate an R2 **bucket** with a folder under that bucket. This remains related to BUG-012 and BUG-013.
