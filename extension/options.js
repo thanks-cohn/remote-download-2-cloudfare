@@ -488,7 +488,7 @@ function simpleExtraOptions(profile){
   function addRow(item){
     const row=document.createElement("div");row.className="grid two";
     const label=field("Menu option label",item.label||"",v=>{item.label=v;scheduleSave();},"text","e.g. Artwork");
-    const prefix=field("Location inside bucket",item.prefix||"",v=>{item.prefix=v.replace(/^\\/+|\\/+$/g,"");scheduleSave();},"text","e.g. images/portraits");
+    const prefix=field("Location inside bucket",item.prefix||"",v=>{item.prefix=v.replace(/^\/+|\/+$/g,"");scheduleSave();},"text","e.g. images/portraits");
     const remove=document.createElement("button");remove.type="button";remove.className="danger";remove.textContent="Remove option";
     remove.addEventListener("click",()=>{const index=options.indexOf(item);if(index>=0)options.splice(index,1);row.remove();saveProfiles();});
     row.append(label,prefix,remove);rows.append(row);
