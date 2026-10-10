@@ -48,6 +48,27 @@ Use the same ownership-and-update philosophy for Substrate, Chute, and future to
 
 **The question for every release:** What makes established software feel trustworthy when someone's grade, career, business, or irreplaceable work depends on a document? Identify those properties, measure them, and make them non-negotiable acceptance criteria. ReDown, Chute, and every future product should follow the same discipline appropriate to its domain.
 
+### Why People Trust
+
+People trust established document tools such as Microsoft Word, Google Docs, and Adobe Acrobat because important work can be entrusted to them with reasonable confidence. A thesis opens again tomorrow. A contract can be shared without its meaning changing. A résumé exports without ruined pages. A document can be printed, archived, recovered, and understood years later. Familiarity, support, accessibility, compatibility, and institutional adoption reinforce this trust—but dependable behavior must be its foundation.
+
+**Our highest aspiration:** If Word, Google Docs, Acrobat, and their vendors disappeared tomorrow, Substrate should eventually be able to **safely, proudly, and responsibly carry the mantle** of professional and academic document work. We must earn that role, rather than assume it. It is a long-term acceptance standard, not a claim of current parity.
+
+To earn that trust, we aim for:
+
+1. **Preservation without surprises.** Text, layout, references, images, and metadata must survive saving, reopening, editing, and exporting. Never silently discard content or claim a lossy conversion succeeded perfectly.
+2. **Predictable output.** Document pages, fonts, printing, DOCX compatibility, and PDF rendering must behave consistently in supported workflows. Test what recipients actually see and receive.
+3. **Work that outlives the application.** Open, documented, versioned formats; reversible migrations where possible; accessible export; no dependence on the vendor's continued existence to read one's own files.
+4. **Recovery when things go wrong.** Atomic saves, autosave, backups, revision history, disaster recovery, and clear error reporting. Treat corruption and data loss as urgent failures.
+5. **Verifiable quality.** Golden document corpora, compatibility matrices, deterministic tests, visual PDF comparisons, accessibility testing, fuzzing, regression gates, and published known limitations.
+6. **Understandable debugging.** Human-readable diagnostics for ordinary developers and users, alongside structured traces and reproducible workflows for agents. Never silently collect private document content.
+7. **Trust at institutional scale.** Security, privacy, permissions, accessibility, long-document performance, predictable collaboration, support policies, and dependable behavior across academic and workplace settings.
+8. **Honest communication.** State supported features, compatibility gaps, and reliability evidence precisely. The user's most important document must never be a beta test without their knowledge.
+
+**The ultimate test:** Could a university, law office, publisher, student, or employee choose Substrate for critical work without fearing that the final document would emerge mangled, inaccessible, or lost? Until we can demonstrate that answer through evidence, we keep improving.
+
+We are not aiming merely to look like the established leaders. We are aiming to become **a dependable alternative worthy of inheriting their responsibilities**.
+
 ### Non-negotiable engineering commitments
 
 - **Document fidelity first.** From the beginning, architect Substrate's word processing, document formatting, layout, pagination, fonts, images, tables, headers/footers, page breaks, printing, and PDF generation to avoid silent content loss or unexpected visual changes. Round-trip and export fidelity must be tested, not assumed.
