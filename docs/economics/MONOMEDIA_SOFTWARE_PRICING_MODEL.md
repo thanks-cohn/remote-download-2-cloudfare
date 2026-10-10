@@ -42,6 +42,36 @@ Advanced Cloudflare Explorer UX, persistent file identities, portable structured
 ### Family pattern
 Use the same ownership-and-update philosophy for Substrate, Chute, and future tools, while varying capabilities and pricing where required by real costs.
 
+## Quality and Dependability Charter — Substrate and the entire family
+
+**Strategic ambition:** Build software that people can confidently use for serious professional, academic, and creative work. Substrate should ultimately compete on dependability and capability with established products such as Microsoft Word, Google Docs, and Adobe Acrobat—not merely attract users through novelty, visual appeal, a proprietary format, or low price. This is a **long-term objective, not a claim of present feature parity**.
+
+**The question for every release:** What makes established software feel trustworthy when someone's grade, career, business, or irreplaceable work depends on a document? Identify those properties, measure them, and make them non-negotiable acceptance criteria. ReDown, Chute, and every future product should follow the same discipline appropriate to its domain.
+
+### Non-negotiable engineering commitments
+
+- **Document fidelity first.** From the beginning, architect Substrate's word processing, document formatting, layout, pagination, fonts, images, tables, headers/footers, page breaks, printing, and PDF generation to avoid silent content loss or unexpected visual changes. Round-trip and export fidelity must be tested, not assumed.
+- **Open and durable standards.** Prefer documented, versioned, interoperable formats and established standards (e.g., DOCX/OOXML where appropriate, PDF/PDF-A where applicable). Substrate's native format should have a public, well-specified schema, migration policy, and export pathways; users must not be trapped by a proprietary file type.
+- **Boring stability.** Correctness, autosave, crash recovery, undo/redo, long-document performance, and reliable reopen/save behavior matter more than dazzling demonstrations. Never market a document capability as dependable before test evidence supports it.
+- **Deep, approachable debugging.** Provide normal programmers with understandable logs, reproducible error reports, diagnostics, and clear failure states. Also offer structured machine-readable traces, deterministic reproduction fixtures, and stable diagnostic APIs for agents. Diagnostic facilities must respect user privacy and avoid silently collecting document contents.
+- **Compatibility as continuous work.** Test imports/exports against a diverse real-world corpus and relevant application versions. Track unsupported constructs honestly; warn users before a lossy conversion rather than pretending it worked.
+- **Evidence-based release gates.** Automated unit, property, integration, regression, fuzz, accessibility, cross-platform, and visual/PDF-diff tests; reproducible benchmarks; canary releases and rollback plans. No major feature ships until its failure modes and recovery behavior have been exercised.
+- **Low-end-first excellence.** Keep startup, memory, responsiveness, and output correctness strong on modest hardware. Performance is part of quality, but must never be achieved by silently corrupting or degrading documents.
+- **No quality paywall.** Basic should be reliable and delightful; Premium adds advanced capabilities and richer experiences, not the right to correct files or receive essential bug and security fixes.
+
+### Substrate acceptance examples (future engineering checklist)
+
+1. Repeatedly open → edit → save → reopen representative documents without losing text, styles, references, images, or layout semantics that the format supports.
+2. Export identical source revisions to reproducible, standards-conforming PDF output within documented rendering tolerances; check page count, geometry, selectable text, links, and font embedding where supported.
+3. Compare supported DOCX imports and exports with reference applications using a curated corpus of simple, complex, multilingual, and very long documents, recording discrepancies as actionable bugs.
+4. Simulate crashes, interrupted saves, storage exhaustion, malformed files, missing fonts, and unsupported features; preserve originals and provide clear recovery or warnings.
+5. Allow a non-agent programmer to diagnose a failed operation using human-readable logs, while an automated agent can retrieve an equivalent structured trace and reproduce the bug.
+6. Publish a feature-compatibility matrix and known limitations; do not promise universal or perfect parity before achieving it.
+
+### Business implication
+
+Trust is an economic asset earned through repeated correct behavior. The goal is to make reliability a defining reason to choose Monomedia software, even in crowded markets. Sustainable pricing should fund rigorous testing, compatibility upkeep, customer support, diagnostics, and long-term stewardship. **Impressive to see; dependable in use.**
+
 ## Sustainability and fairness
 
 - Make the software easy to support: good diagnostics, documentation, reliable defaults, automated bug capture (with privacy protections), and small efficient updates.
