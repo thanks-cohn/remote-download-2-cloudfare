@@ -33,7 +33,7 @@
       const title=nodeElement('div');title.append(nodeElement('h3','',profile.accountName || profile.name || profile.bucketName),nodeElement('div','meta','Existing locations and new locations are separate choices.'));
       const toggle=nodeElement('label','toggle');const enabled=nodeElement('input');enabled.type='checkbox';enabled.checked=model.enabled;
       enabled.addEventListener('change',async()=>{model.enabled=enabled.checked;try{await save(profile);live(model.enabled?'Included in Nested mode.':'Excluded from Nested mode. Your locations are kept.');}catch(error){enabled.checked=!model.enabled;model.enabled=enabled.checked;live(error.message,true);}});
-      toggle.append(enabled,document.createTextNode('Include in Nested mode'));head.append(title,toggle);card.append(head);
+      toggle.append(enabled,document.createTextNode('Show this account in the Nested right-click menu'));head.append(title,toggle);card.append(head);
       if(model.imported)card.append(nodeElement('div','nested-import-note','Previous entries are checked against Cloudflare. Missing folders need to be selected or created; no existing files are moved.'));
       const headings=nodeElement('div','nested-columns');['Existing location','Create a new location here','Actions'].forEach(text=>headings.append(nodeElement('span','',text)));card.append(headings);
       const roots=nodeElement('div','nested-roots');card.append(roots);
