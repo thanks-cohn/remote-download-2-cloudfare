@@ -748,6 +748,7 @@ async function cfJson(path, options = {}) {
 importScripts("cloudflare-auth.js");
 importScripts("cloudflare-api.js");
 importScripts("nested-locations.js");
+importScripts("rfis-index.js");
 async function connectCloudflare() { return RedownCloudflareAuth.connect(); }
 async function disconnectCloudflare() {
   const { cloudflareAuth } = await chrome.storage.local.get("cloudflareAuth");
@@ -1120,6 +1121,9 @@ async function listObjectsPage(accountId, bucketName, prefix = "", cursor = "", 
     : Array.isArray(info?.delimited)
       ? info.delimited
       : [];
+  // Persist only confirmed objects returned by R2. Index failures must not block browsing.
+  try { await RedownRFIS.observe(accountId,bucketName,objects); }
+  catch (error) { console.warn("RFIS observation unavailable:",error); }
   return {
     objects,
     delimited,
@@ -1811,6 +1815,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         return sendResponse({ ok:true, ...(await configureAssetDomain(message.accountId,message.bucketName,message.website)) });
       }
       if (message?.type === "cfObjects") return sendResponse({ ok:true, ...(await listObjects(message.accountId,message.bucketName,message.prefix,message.cursor)) });
+      if (message?.type === "rfisExport") return sendResponse({ok:true,manifest:await RedownRFIS.exportJSON()});
       if (message?.type === "cfFolderPrefixes") return sendResponse({ ok:true, prefixes:await listFolderPrefixes(message.accountId,message.bucketName,message.limit || 5000) });
       if (message?.type === "cfFolderChildren") return sendResponse({
         ok:true,
