@@ -444,18 +444,33 @@ function assetCorsControl(profile){
 }
 
 function renderRightClickMode(){
+  $("use-simple-menu").checked=rightClickMode==='simple';
   $("use-nested-menu").checked=rightClickMode==='nested';
+  $("simple-menu-editor").hidden=rightClickMode!=='simple';
+  $("nested-menu-editor-panel").hidden=rightClickMode!=='nested';
   $("right-click-mode-status").textContent=rightClickMode==='nested'
-    ? "Nested is active. Simple destinations are hidden from the right-click menu."
-    : "Simple is active. Nested destinations are hidden from the right-click menu.";
+    ? "Nested menu active. Simple locations are saved but inactive."
+    : "Simple menu active. Nested locations are saved but inactive.";
 }
-$("use-nested-menu").addEventListener("change",async event=>{
-  const checkbox=event.target,previous=rightClickMode;
-  rightClickMode=checkbox.checked ? 'nested' : 'simple';checkbox.disabled=true;
-  try{await chrome.storage.local.set({rightClickMode});renderRightClickMode();}
-  catch(error){rightClickMode=previous;renderRightClickMode();$("right-click-mode-status").textContent=error?.message || "Could not save the menu mode. Retry.";}
-  finally{checkbox.disabled=false;}
-});
+async function chooseRightClickMode(nextMode){
+  if(nextMode===rightClickMode){renderRightClickMode();return;}
+  const previous=rightClickMode;
+  rightClickMode=nextMode;
+  $("use-simple-menu").disabled=true;
+  $("use-nested-menu").disabled=true;
+  renderRightClickMode();
+  try {await chrome.storage.local.set({rightClickMode});}
+  catch(error){
+    rightClickMode=previous;
+    renderRightClickMode();
+    $("right-click-mode-status").textContent=error?.message || "Could not save the menu mode.";
+  } finally {
+    $("use-simple-menu").disabled=false;
+    $("use-nested-menu").disabled=false;
+  }
+}
+$("use-simple-menu").addEventListener("change",()=>chooseRightClickMode("simple"));
+$("use-nested-menu").addEventListener("change",()=>chooseRightClickMode("nested"));
 
 function renderProfiles(){
   renderRightClickMode();
