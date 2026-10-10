@@ -3268,13 +3268,31 @@ function formatTransferDate(value){
 async function openTransferLocation(item,parts){
   if(parts?.profile?.type!=="cloudflare-r2"||!parts.key)return;
   const folder=parts.key.split("/").slice(0,-1).join("/");
-  const select=$("local-profile");
-  if(select){
-    select.value=parts.profile.id;
-    workspaceTarget=parts.profile;
+  try {
+    // Explorer owns its target state. Do not overwrite it with an upload preset.
+    await goLocation(parts.profile.accountId,parts.profile.bucketName,folder);
+    $("explorer")?.scrollIntoView({behavior:"smooth",block:"start"});
+    // Page through remote results until the exact downloaded object is found.
+    let target=explorerItems.find(entry=>!entry.folder&&entry.key===parts.key);
+    let pages=0;
+    while(!target && explorerNextCursor && pages++<50){
+      const previous=explorerNextCursor;
+      await browseWorkspace({append:true});
+      target=explorerItems.find(entry=>!entry.folder&&entry.key===parts.key);
+      if(explorerNextCursor===previous)break;
+    }
+    if(!target){
+      finishOperation("Opened the destination folder, but the downloaded file was not found in the loaded results. It may have been moved or deleted.",true);
+      return;
+    }
+    const index=sortedVisibleItems().findIndex(entry=>entry.id===target.id);
+    if(index>=explorerVisibleLimit){
+      explorerVisibleLimit=Math.ceil((index+1)/EXPLORER_RENDER_LIMIT)*EXPLORER_RENDER_LIMIT;
+    }
+    await selectSingleExplorerItem(target,{focus:true});
+  } catch(error){
+    finishOperation(error?.message||"Could not open this download in Explorer.",true);
   }
-  await goLocation(parts.profile.accountId,parts.profile.bucketName,folder);
-  $("local-tools")?.scrollIntoView({behavior:"smooth",block:"start"});
 }
 async function beginRename(item,parts,nameEl,cell){
   if(parts?.profile?.type!=="cloudflare-r2")return;
