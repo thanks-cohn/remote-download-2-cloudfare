@@ -3627,6 +3627,27 @@ $("add-github").addEventListener("click",()=>{
   renderProfiles();
   document.querySelector("#profiles .card:last-child")?.scrollIntoView({behavior:"smooth"});
 });
+$("rfis-export").addEventListener("click",async()=>{
+  const button=$("rfis-export");
+  button.disabled=true;
+  setStatus("rfis-status","Preparing local index JSON…");
+  try {
+    const response=await send({type:"rfisExport"});
+    if(!response?.ok)throw new Error(response?.error||"Could not export file index.");
+    const blob=new Blob([JSON.stringify(response.manifest,null,2)],{type:"application/json"});
+    const url=URL.createObjectURL(blob);
+    const link=document.createElement("a");
+    link.href=url;
+    link.download="redown-rfis-"+new Date().toISOString().slice(0,10)+".json";
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),30000);
+    setStatus("rfis-status","Export ready. This snapshot contains observed files only; it does not imply a complete Cloudflare scan.");
+  }catch(error){
+    setStatus("rfis-status",error?.message||String(error),"error");
+  }finally{button.disabled=false;}
+});
 $("refresh-history").addEventListener("click",()=>renderHistory({markSeen:true}));
 
 let downloadsDirty=false;
