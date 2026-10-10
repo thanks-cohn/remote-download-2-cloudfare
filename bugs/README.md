@@ -308,3 +308,18 @@ In **Upload from computer**, after choosing the Cloudflare R2 bucket `works`, th
 - Preserve the layout improvement from BUG-003 without reintroducing overflow at 1366×768.
 
 **Evidence:** User screenshot October 10, 2026 of Upload from Computer showing `works` and a partly populated multi-level location builder.
+
+
+### October 10 follow-up — misleading top-right locations after selecting a bucket
+
+**Additional screenshot:** The left **Bucket** selector was set to `extended`, while the right **Location** selector offered `works` and allowed a path beneath it. The user reports that the child list under this combination is incomplete, whereas selecting the corresponding real bucket in the **left** selector leads to correctly enumerated children. The user reasonably interprets the right-hand option as another bucket; the UI must not present a cached or unrelated path as if it is a verified folder belonging to the selected bucket.
+
+**Confirmed code-level contamination risk:** `loadUploadLocations()` in `extension/options.js` combines live `cfFolderChildren` results for the selected bucket with values from `uploadProfile()?.folders`, without verifying those saved prefixes against the live bucket hierarchy. It also preserves a previously selected `local-prefix` value even after changing the bucket. These mechanisms can make a path from an earlier preset or selection appear under a different bucket. This is a concrete suspect mechanism, not yet runtime proof of every option shown in the screenshot.
+
+**Fix requirements:**
+- Bind the Location options, cached prefixes and selected path strictly to the selected **account ID + bucket name**, resetting them on bucket changes unless the path is actually validated in the newly selected bucket.
+- Populate the first location dropdown from verified *immediate* children of that bucket. Never mix other bucket names or unverified profile defaults into the verified list.
+- If a saved preset references a missing path, show it separately as **Saved path — not verified in this bucket**; don't silently present it as an existing folder.
+- Clear or validate old selections before rendering descendants, and discard stale asynchronous responses if bucket selection changes while loading.
+- Preserve a visible **Loading folders…** state, distinguish incomplete results from empty folders, and surface lookup failures with retry.
+- Compare results from the left-selected `works` bucket against those for `extended` with `works` selected on the right, to reproduce and isolate the mismatch.
