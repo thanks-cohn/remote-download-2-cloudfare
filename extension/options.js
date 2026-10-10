@@ -3627,6 +3627,23 @@ $("add-github").addEventListener("click",()=>{
   renderProfiles();
   document.querySelector("#profiles .card:last-child")?.scrollIntoView({behavior:"smooth"});
 });
+chrome.storage.local.get("rfisPreviewEnabled").then(({rfisPreviewEnabled=false})=>{
+  $("rfis-preview-enable").checked=rfisPreviewEnabled;
+  $("rfis-export").disabled=!rfisPreviewEnabled;
+}).catch(error=>setStatus("rfis-status",error.message||String(error),"error"));
+$("rfis-preview-enable").addEventListener("change",async(event)=>{
+  const enabled=event.target.checked;
+  try {
+    await chrome.storage.local.set({rfisPreviewEnabled:enabled});
+    $("rfis-export").disabled=!enabled;
+    setStatus("rfis-status",enabled
+      ?"Experimental Premium index preview enabled. New R2 listings will be observed locally."
+      :"Basic mode: rich indexing disabled. Existing preview data is retained locally until separately cleared.");
+  }catch(error){
+    event.target.checked=!enabled;
+    setStatus("rfis-status",error.message||String(error),"error");
+  }
+});
 $("rfis-export").addEventListener("click",async()=>{
   const button=$("rfis-export");
   button.disabled=true;
