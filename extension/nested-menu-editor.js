@@ -14,7 +14,7 @@
     if(pending.size)return;
     pending.add(key);container.setAttribute("aria-busy","true");const locked=[...container.querySelectorAll("input,select,button")];const previous=locked.map(el=>el.disabled);locked.forEach(el=>el.disabled=true);
     try {await task();} catch(error) {live(error?.message || 'Could not finish. Retry.',true);}
-    finally {pending.delete(key);container.setAttribute("aria-busy","false");locked.forEach((el,index)=>{if(el.isConnected)el.disabled=previous[index];});render(context.profiles());}
+    finally {pending.delete(key);container.setAttribute("aria-busy","false");locked.forEach((el,index)=>{if(el.isConnected)el.disabled=previous[index];});}
   }
   function render(profiles) {
     if(!container)return;
@@ -51,23 +51,23 @@
           if(!current())return;
           if(root.bucketName!==name)root.children.forEach(M.invalidate);
           root.bucketName=result.bucket?.name || name;root.ready=true;newName.value='';drafts.delete(root.id);
-          await save(profile);rerender();live('Bucket created.');
+          await save(profile);select.replaceChildren();selectedOption(select,root.bucketName,root.bucketName);select.value=root.bucketName;add.disabled=false;location.textContent=`${root.bucketName} /`;live('Bucket created.');
         }), 'secondary');
         const actions=nodeElement('div','nested-actions');
-        const add=button('+ Child',()=>run(root.id,[],async()=>{if(!root.ready)return;root.children.push(M.blank());collapsed.delete(root.id);await save(profile);rerender();}));add.disabled=true;add.setAttribute('aria-label','Add a folder inside this bucket');
-        const remove=button('Remove',()=>run(root.id,[],async()=>{model.roots=model.roots.filter(item=>item!==root);await save(profile);rerender();}));remove.setAttribute('aria-label','Remove this bucket from the nested menu only');
+        const add=button('+ Child',()=>run(root.id,[],async()=>{if(!root.ready)return;root.children.push(M.blank());collapsed.delete(root.id);await save(profile);children.replaceChildren();for(const item of root.children)folderRow(root,item,children,'',root.ready,0);}));add.disabled=true;add.setAttribute('aria-label','Add a folder inside this bucket');
+        const remove=button('Remove',()=>run(root.id,[],async()=>{model.roots=model.roots.filter(item=>item!==root);await save(profile);group.remove();}));remove.setAttribute('aria-label','Remove this bucket from the nested menu only');
         actions.append(add,remove);
-        const choose=nodeElement('div','nested-choice');const fold=button('▾',()=>{collapsed.has(root.id)?collapsed.delete(root.id):collapsed.add(root.id);rerender();},'nested-collapse ghost');fold.setAttribute('aria-expanded',String(!collapsed.has(root.id)));fold.setAttribute('aria-label','Expand or collapse bucket children');fold.textContent=collapsed.has(root.id)?'▸':'▾';choose.append(fold,select);
+        const choose=nodeElement('div','nested-choice');const fold=button('▾',()=>{collapsed.has(root.id)?collapsed.delete(root.id):collapsed.add(root.id);children.hidden=collapsed.has(root.id);fold.textContent=collapsed.has(root.id)?'▸':'▾';fold.setAttribute('aria-expanded',String(!collapsed.has(root.id)));},'nested-collapse ghost');fold.setAttribute('aria-expanded',String(!collapsed.has(root.id)));fold.setAttribute('aria-label','Expand or collapse bucket children');fold.textContent=collapsed.has(root.id)?'▸':'▾';choose.append(fold,select);
         const creator=nodeElement('form','nested-create');creator.append(newName,create);creator.addEventListener('submit',event=>{event.preventDefault();create.click();});
         row.append(choose,creator,actions);group.append(row);
         const location=nodeElement('div','nested-path',root.bucketName?`${root.bucketName} /`:'Choose an existing bucket or create a new one.');group.append(location);
-        const children=nodeElement('div','nested-children');group.append(children);roots.append(group);
+        const children=nodeElement('div','nested-children');children.hidden=collapsed.has(root.id);group.append(children);roots.append(group);
         select.addEventListener('change',()=>run(root.id,[select,create,newName,add],async()=>{
           if(!select.value)return;
           if(root.bucketName!==select.value)root.children.forEach(M.invalidate);
           root.bucketName=select.value;root.ready=true;
           // The adjacent creation field is deliberately untouched.
-          await save(profile);rerender();
+          await save(profile);location.textContent=`${root.bucketName} /`;children.replaceChildren();for(const node of root.children)folderRow(root,node,children,'',true,0);
         }));
         async function populate() {
           try {
@@ -98,26 +98,26 @@
           if(!result?.ok)throw new Error(result?.error || 'Could not create child folder.');
           if(!current())return;
           M.setLocation(node,name);newName.value='';drafts.delete(node.id);
-          await save(profile);rerender();live(`Created ${root.bucketName}/${M.path(parentPath,name)}/`);
+          await save(profile);select.replaceChildren();selectedOption(select,name,name);select.value=name;node.ready=true;add.disabled=false;location.textContent=`${root.bucketName}/${M.path(parentPath,name)}/`;live(`Created ${root.bucketName}/${M.path(parentPath,name)}/`);
         }),'secondary');create.disabled=true;
         const creator=nodeElement('form','nested-create');creator.append(newName,create);creator.addEventListener('submit',event=>{event.preventDefault();create.click();});
-        const add=button('+ Child',()=>run(node.id,[],async()=>{if(!node.ready)return;node.children.push(M.blank());collapsed.delete(node.id);await save(profile);rerender();}));add.disabled=true;add.setAttribute('aria-label','Add a child inside this folder');
-        const remove=button('Remove',()=>run(node.id,[],async()=>{const siblings=findChildren(root,node.id);const index=siblings.indexOf(node);if(index>=0)siblings.splice(index,1);await save(profile);rerender();}));remove.setAttribute('aria-label','Remove this menu branch without deleting any Cloudflare folders');
+        const add=button('+ Child',()=>run(node.id,[],async()=>{if(!node.ready)return;node.children.push(M.blank());collapsed.delete(node.id);await save(profile);children.replaceChildren();for(const child of node.children)folderRow(root,child,children,M.path(parentPath,node.name),true,depth+1);fold.disabled=false;}));add.disabled=true;add.setAttribute('aria-label','Add a child inside this folder');
+        const remove=button('Remove',()=>run(node.id,[],async()=>{const siblings=findChildren(root,node.id);const index=siblings.indexOf(node);if(index>=0)siblings.splice(index,1);await save(profile);group.remove();}));remove.setAttribute('aria-label','Remove this menu branch without deleting any Cloudflare folders');
         const actions=nodeElement('div','nested-actions');actions.append(add,remove);
-        const choose=nodeElement('div','nested-choice');const fold=button(collapsed.has(node.id)?'▸':'▾',()=>{collapsed.has(node.id)?collapsed.delete(node.id):collapsed.add(node.id);rerender();},'nested-collapse ghost');fold.setAttribute('aria-expanded',String(!collapsed.has(node.id)));fold.setAttribute('aria-label','Expand or collapse folder children');fold.disabled=!node.children.length;choose.append(fold,select);
+        const choose=nodeElement('div','nested-choice');const fold=button(collapsed.has(node.id)?'▸':'▾',()=>{collapsed.has(node.id)?collapsed.delete(node.id):collapsed.add(node.id);children.hidden=collapsed.has(node.id);fold.textContent=collapsed.has(node.id)?'▸':'▾';fold.setAttribute('aria-expanded',String(!collapsed.has(node.id)));},'nested-collapse ghost');fold.setAttribute('aria-expanded',String(!collapsed.has(node.id)));fold.setAttribute('aria-label','Expand or collapse folder children');fold.disabled=!node.children.length;choose.append(fold,select);
         row.append(choose,creator,actions);group.append(row);
         const location=nodeElement('div','nested-path');group.append(location);
-        const children=nodeElement('div','nested-children');group.append(children);parent.append(group);
+        const children=nodeElement('div','nested-children');children.hidden=collapsed.has(node.id);group.append(children);parent.append(group);
         const repaint=()=>{
           location.textContent=node.ready?`${root.bucketName}/${M.path(parentPath,node.name)}/`:node.name?`Previous entry: ${node.name} · choose an existing folder or create it here.`:`Inside ${root.bucketName}/${parentPath}${parentPath?'/':''}`;
           add.disabled=!parentReady || !node.ready;
-          if(!collapsed.has(node.id))for(const child of node.children)folderRow(root,child,children,node.name?M.path(parentPath,node.name):parentPath,parentReady&&node.ready,depth+1);
+          if(!collapsed.has(node.id) && !children.childElementCount)for(const child of node.children)folderRow(root,child,children,node.name?M.path(parentPath,node.name):parentPath,parentReady&&node.ready,depth+1);
         };
         select.addEventListener('change',()=>run(node.id,[select,create,newName,add],async()=>{
           if(!select.value)return;
           M.setLocation(node,select.value);
           // Choosing an existing folder never assigns to newName.value.
-          await save(profile);rerender();
+          await save(profile);children.replaceChildren();location.textContent=`${root.bucketName}/${M.path(parentPath,node.name)}/`;for(const child of node.children)folderRow(root,child,children,M.path(parentPath,node.name),true,depth+1);
         }));
         if(!parentReady){node.ready=false;repaint();return;}
         (async()=>{
@@ -138,7 +138,7 @@
       }
       model.roots.forEach(rootRow);
       const footer=nodeElement('div','nested-footer');
-      footer.append(button('+ Add bucket',()=>run('add-bucket',[],async()=>{model.roots.push({id:crypto.randomUUID(),bucketName:'',ready:false,children:[]});await save(profile);rerender();})),button('Refresh locations',()=>rerender()));
+      footer.append(button('+ Add bucket',()=>run('add-bucket',[],async()=>{const newRoot={id:crypto.randomUUID(),bucketName:'',ready:false,children:[]};model.roots.push(newRoot);await save(profile);rootRow(newRoot);})),button('Refresh locations',()=>rerender()));
       card.append(footer);container.append(card);
     }
   }
