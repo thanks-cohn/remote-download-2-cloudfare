@@ -1432,8 +1432,9 @@ let explorerSearchActive = false;
 let explorerSearchRequestId = 0;
 let explorerSearchTimer = null;
 let explorerPreparing = new Map();
-const EXPLORER_RENDER_LIMIT = 400;
-let explorerVisibleLimit = EXPLORER_RENDER_LIMIT;
+const EXPLORER_PAGE_SIZES = [25,50,100];
+let explorerPageSize = 50;
+let explorerPage = 0;
 
 function normalizePrefix(value) {
   const parts = String(value || "")
@@ -1638,7 +1639,7 @@ async function runExplorerSearch(query) {
   explorerSelected.clear();
   explorerAnchor=-1;
   explorerNextCursor="";
-  explorerVisibleLimit=EXPLORER_RENDER_LIMIT;
+  explorerPage=0;
   const root=$("workspace-objects");
   root.innerHTML='<div class="file-empty"><span class="operation-spinner"></span><strong>Searching remote paths…</strong>Matching files and folders across this location.</div>';
 
@@ -2038,7 +2039,7 @@ function showBucketRows(accountId = "") {
   workspacePrefix = "";
   explorerArchive = null;
   explorerNextCursor = "";
-  explorerVisibleLimit = EXPLORER_RENDER_LIMIT;
+  explorerPage = 0;
   explorerSelected.clear();
   explorerAnchor = -1;
 
@@ -2124,7 +2125,7 @@ async function browseWorkspace({ append = false } = {}) {
     $("explorer-status").textContent = "";
     explorerRawObjects = [];
     explorerNextCursor = "";
-    explorerVisibleLimit = EXPLORER_RENDER_LIMIT;
+    explorerPage = 0;
   }
 
   let result=null;
@@ -2195,7 +2196,10 @@ function renderFileItems() {
   const root = $("workspace-objects");
   root.replaceChildren();
   const all = sortedVisibleItems();
-  const items = all.slice(0, explorerVisibleLimit);
+  const pageCount = Math.max(1,Math.ceil(all.length/explorerPageSize));
+  explorerPage=Math.min(explorerPage,pageCount-1);
+  const start=explorerPage*explorerPageSize;
+  const items = all.slice(start,start+explorerPageSize);
   const query = $("workspace-search")?.value.trim() || "";
   if (explorerSearchActive && !items.length)
     root.innerHTML = `<div class="file-empty"><strong>No remote matches for “${query}”</strong>Try a filename, folder name, or path fragment.</div>`;
@@ -2204,22 +2208,40 @@ function renderFileItems() {
       '<div class="file-empty"><strong>No R2 buckets found</strong>Create a bucket to begin.</div>';
   else if (!items.length)
     root.innerHTML = `<div class="file-empty"><strong>${workspacePrefix ? "This folder is empty." : "This bucket is empty."}</strong>Drop files here or choose Upload.</div>`;
-  items.forEach((item, index) => root.append(createFileRow(item, index)));
-  if (all.length > items.length || explorerNextCursor) {
-    const more = document.createElement("button");
-    more.className = "secondary load-more";
-    more.textContent = items.length < all.length
-      ? `Show ${Math.min(EXPLORER_RENDER_LIMIT, all.length - items.length)} more`
-      : "Load more files";
-    more.onclick = () => {
-      if (items.length < all.length) {
-        explorerVisibleLimit += EXPLORER_RENDER_LIMIT;
-        renderFileItems();
-      } else {
-        browseWorkspace({ append: true });
+  items.forEach((item, index) => root.append(createFileRow(item, start+index)));
+  const pager=$("explorer-pagination");
+  if(pager){
+    pager.replaceChildren();
+    const label=document.createElement("span");
+    label.className="explorer-page-label";
+    label.textContent=all.length
+      ? `${start+1}–${start+items.length} of ${all.length}${explorerNextCursor && !explorerSearchActive ? "+" : ""}`
+      : "0 items";
+    const size=document.createElement("select");
+    size.setAttribute("aria-label","Files per page");
+    for(const count of EXPLORER_PAGE_SIZES){
+      const opt=document.createElement("option");opt.value=String(count);opt.textContent=`${count} per page`;size.append(opt);
+    }
+    size.value=String(explorerPageSize);
+    size.addEventListener("change",()=>{explorerPageSize=Number(size.value);explorerPage=0;renderFileItems();root.scrollTop=0;});
+    const prev=document.createElement("button");
+    prev.type="button";prev.textContent="← Previous";prev.disabled=explorerPage===0;
+    prev.addEventListener("click",()=>{explorerPage--;renderFileItems();root.scrollTop=0;});
+    const next=document.createElement("button");
+    next.type="button";next.textContent="Next →";
+    next.disabled=(explorerPage+1)*explorerPageSize>=all.length && (!explorerNextCursor || explorerSearchActive);
+    next.addEventListener("click",async()=>{
+      if((explorerPage+1)*explorerPageSize>=sortedVisibleItems().length && explorerNextCursor && !explorerSearchActive){
+        next.disabled=true;next.textContent="Loading…";
+        const cursor=explorerNextCursor;
+        await browseWorkspace({append:true});
+        if(cursor===explorerNextCursor && (explorerPage+1)*explorerPageSize>=sortedVisibleItems().length){renderFileItems();return;}
       }
-    };
-    root.append(more);
+      if((explorerPage+1)*explorerPageSize<sortedVisibleItems().length){explorerPage++;renderFileItems();root.scrollTop=0;}
+    });
+    const number=document.createElement("span");
+    number.textContent=`Page ${explorerPage+1}${explorerNextCursor&&!explorerSearchActive ? " (more available)" : ` of ${pageCount}`}`;
+    pager.append(label,size,prev,number,next);
   }
   root.oncontextmenu = (e) => {
     if (e.target === root || e.target.closest(".file-empty")) {
@@ -2370,6 +2392,7 @@ async function selectSingleExplorerItem(item, { focus = false, scroll = true } =
   explorerSelected = new Set([item.id]);
   const items = sortedVisibleItems();
   explorerAnchor = Math.max(0, items.findIndex((entry) => entry.id === item.id));
+  explorerPage=Math.floor(explorerAnchor/explorerPageSize);
   renderFileItems();
   const row = rootRow(item.id);
   if (scroll) row?.scrollIntoView({ block:"nearest" });
@@ -2475,6 +2498,7 @@ function renderArchiveFolder(prefix = "") {
     } else if (!entry.directory) files.push({ id:`archive:${entry.name}`, name:rest, key:entry.name, folder:false, kind:fileKind(entry.name), type:itemType(entry.name), size:entry.size || 0, object:entry, archiveEntry:true });
   }
   explorerItems = [...folders.values(), ...files];
+  explorerPage=0;
   explorerSelected.clear(); explorerAnchor = -1;
   renderFileItems();
 }
@@ -3286,9 +3310,7 @@ async function openTransferLocation(item,parts){
       return;
     }
     const index=sortedVisibleItems().findIndex(entry=>entry.id===target.id);
-    if(index>=explorerVisibleLimit){
-      explorerVisibleLimit=Math.ceil((index+1)/EXPLORER_RENDER_LIMIT)*EXPLORER_RENDER_LIMIT;
-    }
+    if(index>=0) explorerPage=Math.floor(index/explorerPageSize);
     await selectSingleExplorerItem(target,{focus:true});
   } catch(error){
     finishOperation(error?.message||"Could not open this download in Explorer.",true);
