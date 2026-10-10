@@ -16,6 +16,16 @@ Separate the existing Cloudflare/transfer logic from the UI and make it a small,
 
 Each adapter must provide a compelling **Basic** edition rather than being a teaser. **Full API ($8 proposal)** adds sophistication, scale, introspection and advanced orchestration. Core correctness, data integrity, safety checks, security patches and usable error diagnostics are never paywalled.
 
+## Product philosophy — limitless creation, exceptional tools
+
+**Basic is a real foundation, not a crippled demonstration.** An independent programmer, student, creator, or agent should be able to use the free API to build ambitious, original applications, worlds, integrations, and automations without artificial caps on creativity, arbitrary project limits, or intentionally missing correctness guarantees. Practical provider quotas, compute costs, security limits and resource constraints still exist and must be disclosed rather than confused with product-tier restrictions.
+
+**Premium is the better way to work, not permission to work.** Full API should be notably more elegant, functional, productive and desirable through high-level abstractions, efficient bulk workflows, richer debugging and visualization, advanced recovery, history-aware operations, excellent developer tooling, and polished integrations. Premium users pay to accomplish complex work with less effort and greater visibility—not to remove obstacles deliberately imposed on Basic.
+
+The three experiences—Agent API, Debugger API, and Scripting API—each ship as capable Basic products and evolve into substantially richer Full experiences. Shared operation semantics, file safety, reliable results, and clear error messages remain consistent across tiers.
+
+**Release test:** Can a capable developer accomplish a serious task in Basic, even if it takes more manual composition? Does Premium provide a clearly superior, demonstrably more pleasant way to accomplish it? If both answers are not yes, rethink the tier split.
+
 ## Capability matrix
 
 | Interface | Basic (included/free) | Full API (proposed $8) |
