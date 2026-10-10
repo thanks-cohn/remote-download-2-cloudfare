@@ -349,6 +349,14 @@
 
   <section class="section">
     <div class="section-head">
+      <div><h2>File identity index (preview)</h2><div class="section-note">ReDown remembers files discovered while browsing Cloudflare R2. This is a partial index, not a complete bucket scan.</div></div>
+      <button id="rfis-export" class="ghost">Export index JSON</button>
+    </div>
+    <div id="rfis-status" class="status" role="status" aria-live="polite"></div>
+  </section>
+
+  <section class="section">
+    <div class="section-head">
       <div><h2>Downloads</h2><div class="section-note">Successful downloads first. Newest is on top; errors stay available below.</div></div>
       <button id="refresh-history" class="ghost">Refresh</button>
     </div>
