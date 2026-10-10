@@ -1724,9 +1724,14 @@ chrome.contextMenus.onClicked.addListener(async info => {
     if (!profile) return notify("REDOWN", "That destination no longer exists.");
     try {
       const category = categoryForContext(info, sourceUrl, profile);
+      const selectedBucket=profile.type==="cloudflare-r2" ? (profile.simpleBucketName||profile.bucketName) : "";
+      const destinationProfile=selectedBucket!==profile.bucketName
+        ? profiles.find(p=>p.type==="cloudflare-r2"&&p.accountId===profile.accountId&&p.bucketName===selectedBucket)
+        : profile;
+      if(selectedBucket&&!destinationProfile)throw new Error("Selected bucket is not prepared for ReDown transfers. Prepare it in Cloudflare settings first.");
       const location = profile.type === "cloudflare-r2" && profile.defaultPrefix != null
-        ? await ingestCloudflareAtPrefix(profile, sourceUrl, profile.defaultPrefix, basenameFromUrl(sourceUrl))
-        : await ingest(profile, sourceUrl, category);
+        ? await ingestCloudflareAtPrefix(destinationProfile, sourceUrl, profile.defaultPrefix, basenameFromUrl(sourceUrl))
+        : await ingest(destinationProfile, sourceUrl, category);
       await recordTransfer({ ok:true, sourceUrl, profileId:profile.id, profileName:profile.name, category, location });
       await notify("REDOWN complete", location);
     } catch (error) {
