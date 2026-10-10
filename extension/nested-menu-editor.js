@@ -28,6 +28,7 @@
     if(!cloudflare.length){container.append(nodeElement('div','empty','Connect Cloudflare and choose a bucket to configure nested destinations.'));return;}
     for(const profile of cloudflare) {
       const model=profile.nestedMenu ||= M.fromLegacy(profile);
+      // Persisted account/bucket selections are the starting point; no user re-selection should be necessary.
       const card=nodeElement('article','nested-card');
       const head=nodeElement('div','nested-heading');
       const title=nodeElement('div');title.append(nodeElement('h3','',profile.accountName || profile.name || profile.bucketName),nodeElement('div','meta','Existing locations and new locations are separate choices.'));
@@ -126,7 +127,7 @@
             if(!result?.ok)throw new Error(result?.error || 'Could not load child folders.');
             known=result.children || [];select.replaceChildren();selectedOption(select,'',known.length?'Choose an existing folder…':'No folders here yet');
             for(const name of known)selectedOption(select,name,name);
-            node.ready=!node.needsSelection && known.includes(node.name);select.value=node.ready?node.name:'';select.disabled=false;create.disabled=false;
+            node.ready=Boolean(node.name) && known.includes(node.name);if(node.ready)delete node.needsSelection;select.value=node.ready?node.name:'';select.disabled=false;create.disabled=false;
             if(!node.ready)node.children.forEach(M.invalidate);
             await save(profile);if(current())repaint();
           }catch(error){if(!current())return;node.ready=false;node.children.forEach(M.invalidate);select.replaceChildren();selectedOption(select,'','Could not load folders');create.disabled=true;newName.disabled=true;repaint();live(error.message,true);}
