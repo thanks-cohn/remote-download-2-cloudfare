@@ -1,9 +1,51 @@
 # Proposal: ReDown Persistent File Identity and History Engine
 
-**Status:** Architecture proposal — not implemented  
+**Status:** Architecture proposal — experimental partial implementation exists; Basic/Premium separation not implemented  
 **Working standard:** RFIS (ReDown File Identity Standard), version 0 proposal  
 **Project:** ReDown / Cloudflare R2 first; storage-provider-independent core  
 **Date:** 2026-10-10
+
+## Product boundary: ReDown Basic versus Premium
+
+**This is a hard architectural distinction, not merely a different-looking settings page.**
+
+| Capability | ReDown Basic | ReDown Premium |
+| --- | --- | --- |
+| Core R2 upload/download and simple destination navigation | Yes | Yes |
+| Small operational cache for recently used buckets/folders and UI responsiveness | Yes | Yes |
+| Persistent identity and full biography for every observed asset | No requirement | Yes |
+| Rich portable account-scoped JSON manifest, import/export, and incremental discovery | No | Yes |
+| Append-only location/move/rename history with delta compression | No | Yes |
+| Deep Explorer UX, expanded local search, reconciliation and repair | Limited | Full implementation |
+| R2 as source of truth | Yes | Yes |
+
+**Basic should work fully without reading, constructing, or relying on an RFIS rich JSON manifest.** It can maintain a very small, simple cache of recently visited locations or existing folder choices; that cache is disposable, scoped by account/bucket, and always revalidated as needed. Its functionality is a useful demonstration of responsiveness and a preview of the benefits of Premium, never an intentionally broken experience. The Premium engine is an opt-in/entitlement-gated *separate subsystem* built on a provider API adapter, with IndexedDB and an RFIS portable JSON view.
+
+**Implementation gap as of October 10, 2026:** The experimental `extension/rfis-index.js` introduced immediately before this clarification currently observes R2 listing pages unconditionally and the options page exposes an RFIS export control. That proof of concept **is not the desired final Basic behavior**. Before release, wire a real feature-mode boundary so the full RFIS pipeline only runs for explicitly enabled Premium/preview use, or disable it until Premium mode exists. Do not claim premium gating is already implemented; do not implement payment enforcement by UI hiding alone.
+
+### Location delta encoding: keep history, avoid repeated strings
+
+The canonical event is a stable `file_id` plus a **reversible** location change, not duplicated full object paths. Example:
+
+```text
+Known location:
+  account-A / bucket:works / long/location/listing / portrait.webp
+
+Event:
+  file_id: rd_aK7mQ2xP9bL4nR6s
+  kind: moved
+  at: ...
+  unchanged_prefix: "long/location/listing/"
+  before_leaf: "portrait.webp"
+  after_leaf: "portraits/final.webp"
+
+Current:
+  account-A / bucket:works / long/location/listing / portraits/final.webp
+```
+
+This is only one illustrative optimization. In the packed encoding, prefer **dictionary IDs for provider/account/bucket and path segments**, plus a *longest common prefix* and an optional common suffix, with a short changed middle span. Store the confirmed end state as the fast current-location projection, while history retains enough information to reconstruct exact before/after paths. Do not pay the cost of reparsing the full path on each Explorer read.
+
+The delta must support bucket changes, account/provider changes, Unicode and case-preserving paths, edits of any middle segment, duplicate folder names, and repeated moves. A before/after prefix delta is a **storage optimization**, not the method for guessing whether two remote objects are the same file. Confirmed ReDown operations preserve identity; external changes remain observations or candidate matches until verified. Periodic checkpoints avoid replaying millions of events for ordinary browsing. Do not silently delete old events when compacting.
 
 ## 1. Vision
 
