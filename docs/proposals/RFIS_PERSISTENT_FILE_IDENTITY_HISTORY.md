@@ -13,7 +13,13 @@ ReDown should discover every Cloudflare R2 asset it has permission to enumerate,
 
 **Non-negotiable principle:** No routine move, rename, recatalog, or update overwrites the historical record. Current state is a materialized view; historical records remain append-only. Corrections are new events referencing erroneous events, not silent edits.
 
-**Design for pathological churn:** Treat **1,000,000,000,000 addressable file records**, **1,000,000 changes/day**, for **10 years** as a design stress model for the *format and architecture*, not a claim that a single Chrome extension can enumerate or store a trillion R2 objects. At that rate there are approximately **3.65 billion events** over 3650 days, even before discovery events. This exercise must force bounded-memory indexing, independent segments, and inexpensive updates.
+**Long-horizon scalability outlook (not an immediate capacity requirement):** Treat **1,000,000,000,000 addressable file records**, **1,000,000 changes/day**, for **10 years** as a future-facing architectural thought experiment and stress model, **not a launch target, fixed capacity ceiling, or requirement to support that workload in today's Chrome extension**. We want today's modest implementation to evolve toward that scale through additional storage, partitioning, and compute resources without replacing the file identity or history standard. At that rate there are approximately **3.65 billion events** over 3650 days, even before discovery events. This exercise must force bounded-memory indexing, independent segments, and inexpensive updates.
+
+### Guiding philosophy: small today, unbounded in design
+
+RFIS begins with ordinary ReDown use: a browser extension indexing a user's Cloudflare R2 assets. Its **outlook** is much larger. We should not build arbitrary walls around number of files, folders, events, history duration, identity length, storage providers or migration generations. When physical limits are unavoidable (browser quota, server resources, API pagination, memory, throughput), make them explicit operational constraints that can be extended via streaming, additional partitions, or alternate backends—not limitations of the logical standard.
+
+Optimize by default for a light footprint and efficient incremental writes: store facts once, reuse names and path segments, append only changes, load only requested partitions, and retain historical evidence. Compression must never lose filenames, dates, identity or lineage. Benchmark actual tradeoffs rather than assuming a universal size target. For example, supporting a trillion identities and millions of daily changes is an architectural ambition to preserve **from the start**, even though implementation and deployment at that scale come later.
 
 ## 2. Deliverables: a standard and two encodings
 
@@ -135,16 +141,16 @@ Actual exports will be chunked for large collections, with a top-level manifest 
 
 **R2 scope:** R2 object listings are paginated. Maintain resumable, per-prefix scan checkpoints; do not claim a full inventory until completion. Incremental event integration for out-of-band changes may later use R2 notifications or a server-maintained journal. Never assume R2 exposes a complete intrinsic change history.
 
-## 7. Ruthless efficiency: design constraints and honest budgets
+## 7. Ruthless efficiency without artificial limits
 
 The scale target is deliberately extreme:
 - **1 trillion identities** requires efficient *partitioning and addressability*, not one trillion entries resident in extension memory.
 - **1 million events/day for 10 years** is approximately **3.65 billion events** (excluding leap-day effects and catalog discovery). Even at just **16 bytes/event**, a pure event payload is about **58.4 GB**, before indexing, metadata, headers, or replication.
 - **1 trillion individually distinguishable file IDs** alone require at least 40 bits each in a perfectly packed fixed-cardinality encoding (about **5 TB** at the information-theoretic minimum); typical practical IDs occupy considerably more.
-- A universal **2–4 MB full fidelity manifest is impossible** at this scale with arbitrary filenames, locations, dates, and complete histories. Target a *small active directory/snapshot/index root* and independently stored compressed segments instead. Do not promise a hard size bound.
+- **No fixed 2–4 MB requirement or cap is proposed.** The earlier small-file discussion illustrated a preference for efficient metadata, not a product constraint. The goal is the smallest practical overhead at every scale while keeping lossless identity and history. A compact active directory/snapshot/index root can reference independently stored compressed segments as the archive grows.
 - The browser only opens the partition(s) necessary for the user’s active buckets and recent files. Reads/writes and memory should scale with **changed or requested records**, not all historical records.
 
-Suggested performance and resource goals are **hypotheses until benchmarked**: bounded IndexedDB cursor batches (e.g., hundreds to thousands), incremental commits, zero full-data load to render a folder, configurable cache budget, under-4-MB *bootstrap/root metadata target where achievable*, and graceful operation on the project's low-end 4 GB Windows laptop. Benchmarks must measure actual R2 listings, long names, Unicode paths, high churn, fragmentation, and compression ratios.
+Suggested performance and resource goals are **hypotheses until benchmarked**: bounded IndexedDB cursor batches (e.g., hundreds to thousands), incremental commits, zero full-data load to render a folder, configurable cache budget, a compact bootstrap/root metadata index (measured rather than hard-capped), and graceful operation on the project's low-end 4 GB Windows laptop. Benchmarks must measure actual R2 listings, long names, Unicode paths, high churn, fragmentation, and compression ratios.
 
 At global-scale throughput, an ordinary extension cannot independently verify trillions of remote objects; RFIS-Packed must be streamable and sharded, with potentially server-side aggregation. Keep the local consumer simple.
 
@@ -192,7 +198,7 @@ At global-scale throughput, an ordinary extension cannot independently verify tr
 - JSON export → fresh IndexedDB import → JSON export preserves identity, lineage, timestamps, provenance, and event order.
 - Interrupted scan/operation and missing IndexedDB state can resume or recover from an exported manifest without asserting nonexistent remote objects.
 - Folder indexes distinguish cached versus remotely verified values; selectors never treat unrelated buckets or unverified presets as confirmed folders.
-- Scaling benchmarks report measured size, throughput, memory and time; no 4 MB full-history guarantee is claimed.
+- Scaling benchmarks report measured size, throughput, memory and time; growth is supported through segmentation and sharding rather than fixed file, event, history, or dataset ceilings.
 - New data layers work without changing existing R2 keys or forcing users to stamp filenames.
 
 ## 11. Deferred architectural decisions
