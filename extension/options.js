@@ -475,37 +475,124 @@ $("use-nested-menu").addEventListener("change",()=>chooseRightClickMode("nested"
 function simpleExtraOptions(profile){
   const wrap=document.createElement("div");
   wrap.className="card";
-  const heading=document.createElement("div");
-  heading.className="section-head";
+  const heading=document.createElement("div");heading.className="section-head";
   const intro=document.createElement("div");
-  const title=document.createElement("strong");title.textContent="Additional Simple menu options";
-  const note=document.createElement("div");note.className="meta";note.textContent="Each option is another right-click destination inside this same Cloudflare bucket. Paths are relative to the bucket root.";
+  const title=document.createElement("strong");title.textContent="Additional Simple destinations";
+  const note=document.createElement("div");note.className="meta";note.textContent="The menu label is independent of the bucket. Each folder dropdown loads children of its selected parent.";
   intro.append(title,note);
   const add=document.createElement("button");add.type="button";add.className="ghost";add.textContent="+ Add New Option";
   heading.append(intro,add);
   const rows=document.createElement("div");
   const options=profile.simpleOptions ||= [];
   function addRow(item){
-    const row=document.createElement("div");row.className="grid two";
-    const label=field("Menu option label",item.label||"",v=>{item.label=v;scheduleSave();},"text","e.g. Artwork");
-    const prefix=field("Location inside bucket",item.prefix||"",v=>{item.prefix=v.replace(/^\/+|\/+$/g,"");scheduleSave();},"text","e.g. images/portraits");
-    const remove=document.createElement("button");remove.type="button";remove.className="danger";remove.textContent="Remove option";
+    item.bucketName ||=profile.bucketName;
+    const row=document.createElement("div");row.className="card";
+    const first=document.createElement("div");first.className="grid two";
+    first.append(field("Menu label (shown on right-click)",item.label||"",v=>{item.label=v;},"text","My Artwork"));
+    const remove=document.createElement("button");remove.type="button";remove.className="ghost";
+    remove.textContent="Remove option";
     remove.addEventListener("click",()=>{const index=options.indexOf(item);if(index>=0)options.splice(index,1);row.remove();saveProfiles();});
-    row.append(label,prefix,remove);rows.append(row);
+    first.append(remove);row.append(first);
+    const second=document.createElement("div");second.className="grid two";
+    const bucketWrap=document.createElement("div");const bucketLabel=document.createElement("label");bucketLabel.textContent="Bucket";
+    const bucket=document.createElement("select");
+    bucketWrap.append(bucketLabel,bucket);
+    const folders=document.createElement("div");folders.className="location-levels";
+    second.append(bucketWrap,folders);row.append(second);
+    const message=document.createElement("div");message.className="meta";row.append(message);
+    let revision=0;
+    function option(select,value,text){const el=document.createElement("option");el.value=value;el.textContent=text;select.append(el);}
+    async function showFolders(){
+      const version=++revision;
+      folders.replaceChildren();
+      const path=String(item.prefix||"").split("/").filter(Boolean);
+      async function level(index,parent){
+        if(version!==revision||!row.isConnected)return;
+        const sel=document.createElement("select");sel.disabled=true;
+        option(sel,"","Loading folders…");folders.append(sel);
+        const response=await send({type:"cfFolderChildren",accountId:profile.accountId,bucketName:item.bucketName,parentPrefix:parent.join("/"),limit:100000}).catch(error=>({ok:false,error:error.message}));
+        if(version!==revision||!row.isConnected)return;
+        sel.replaceChildren();
+        if(!response?.ok){option(sel,"","Could not load folders — choose another bucket or retry");sel.disabled=false;message.textContent=response?.error||"Folder lookup failed.";return;}
+        option(sel,"",index===0?"/ (bucket root)":"Choose existing child…");
+        for(const name of response.children||[])option(sel,name,name);
+        sel.value=path[index]||"";
+        // Never pretend an absent cached child is a verified location.
+        if(path[index]&&!Array.from(sel.options).some(o=>o.value===path[index])){
+          sel.value="";item.prefix=parent.join("/");saveProfiles();
+          message.textContent="A previously selected folder was not found here.";
+        }
+        sel.disabled=false;
+        sel.addEventListener("change",()=>{
+          const selected=sel.value;
+          item.prefix=[...parent,...(selected?[selected]:[])].join("/");
+          saveProfiles();showFolders();
+        });
+        if(sel.value)await level(index+1,[...parent,sel.value]);
+      }
+      await level(0,[]);
+    }
+    bucket.addEventListener("change",()=>{item.bucketName=bucket.value;item.prefix="";saveProfiles();showFolders();});
+    async function loadBuckets(){
+      bucket.disabled=true;option(bucket,"","Loading buckets…");
+      const result=await send({type:"cfBuckets",accountId:profile.accountId}).catch(error=>({ok:false,error:error.message}));
+      if(!row.isConnected)return;
+      bucket.replaceChildren();
+      if(!result?.ok){option(bucket,"",result?.error||"Unable to load buckets");message.textContent="Cloudflare bucket lookup failed.";return;}
+      for(const name of (result.buckets||[]).map(b=>b.name))option(bucket,name,name);
+      if(!Array.from(bucket.options).some(o=>o.value===item.bucketName))item.bucketName=profile.bucketName;
+      bucket.value=item.bucketName;bucket.disabled=false;
+      await showFolders();
+    }
+    rows.append(row);loadBuckets();
   }
   for(const item of options)addRow(item);
   add.addEventListener("click",()=>{
-    const item={id:uid(),label:"New destination",prefix:""};
+    const item={id:uid(),label:"New destination",bucketName:profile.bucketName,prefix:""};
     options.push(item);addRow(item);saveProfiles();
     rows.lastElementChild?.querySelector("input")?.focus();
   });
-  wrap.append(heading,rows);
-  return wrap;
+  wrap.append(heading,rows);return wrap;
+}
+function simpleBucketCreator(){
+  const bar=document.createElement("div");bar.className="card";
+  const heading=document.createElement("strong");heading.textContent="Make New Bucket";
+  const note=document.createElement("div");note.className="meta";note.textContent="Create an R2 bucket and automatically configure a Simple destination. The menu label can be changed afterwards.";
+  const form=document.createElement("form");form.className="grid two";
+  const account=document.createElement("select");account.setAttribute("aria-label","Cloudflare account");
+  const names=new Map();
+  for(const p of profiles.filter(p=>p.type==="cloudflare-r2"&&p.accountId)){
+    if(!names.has(p.accountId))names.set(p.accountId,p.accountName||p.accountId);
+  }
+  for(const [id,name] of names){const o=document.createElement("option");o.value=id;o.textContent=name;account.append(o);}
+  const input=document.createElement("input");input.required=true;input.placeholder="New bucket name, e.g. my-artwork";input.setAttribute("aria-label","New bucket name");
+  const submit=document.createElement("button");submit.type="submit";submit.className="ghost";submit.textContent="Make New Bucket";
+  const status=document.createElement("div");status.className="meta";status.setAttribute("aria-live","polite");
+  form.append(account,input,submit);
+  form.addEventListener("submit",async(event)=>{
+    event.preventDefault();
+    const name=input.value.trim().toLowerCase();
+    if(!/^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/.test(name)){status.textContent="Use 3–63 lowercase letters, numbers or hyphens.";return;}
+    if(!account.value){status.textContent="Connect and configure a Cloudflare account first.";return;}
+    if(!confirm("Create Cloudflare R2 bucket '"+name+"' in the selected account?"))return;
+    submit.disabled=true;status.textContent="Creating bucket…";
+    try{
+      const created=await send({type:"cfCreateBucket",accountId:account.value,name});
+      if(!created?.ok)throw new Error(created?.error||"Bucket creation failed.");
+      status.textContent="Bucket created. Preparing its right-click destination…";
+      const prepared=await send({type:"cfProvision",accountId:account.value,accountName:names.get(account.value)||account.value,bucketName:name,profileName:name,folders:{}});
+      if(!prepared?.ok)throw new Error("Bucket created, but destination preparation failed: "+(prepared?.error||"Retry from Cloudflare settings."));
+      await refreshProfiles();renderProfiles();
+    }catch(error){status.textContent=error.message||String(error);}
+    finally{submit.disabled=false;}
+  });
+  bar.append(heading,note,form,status);return bar;
 }
 function renderProfiles(){
   renderRightClickMode();
   const root=$("profiles");
   root.replaceChildren();
+  if(rightClickMode==="simple")root.append(simpleBucketCreator());
   const visibleProfiles=profiles.filter(profile=>!profile.explorerManaged);
   $("profiles-empty").hidden=visibleProfiles.length>0;
 
