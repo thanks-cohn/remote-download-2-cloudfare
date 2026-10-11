@@ -1,5 +1,7 @@
 # Internal project inspection API 0.1 (M1 slice)
 
+Incident history is available through the separate [offline debug API 0.1](../debug/API.md). Its own discovery/version contract does not change these project-inspection operations or Forever Works authority.
+
 This is ReDown's **current-how** inspection contract, not Forever Works Public API v0.1 and not ReDown's proposed programmer/transfer API. It reads source/catalog files offline; no browser, Cloudflare account, running server, model provider or extra npm dependency is required. Node's built-in modules suffice. It never executes inspected code, reads process credentials, opens browser storage or invokes network/remote mutations.
 
 ## Try it

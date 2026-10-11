@@ -1,0 +1,129 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://redown.dev/debug/0.1/event.schema.json",
+  "type": "object",
+  "required": [
+    "debugRecordVersion",
+    "eventId",
+    "caseId",
+    "sequence",
+    "recordedAt",
+    "occurredOn",
+    "kind",
+    "claim",
+    "evidenceStatus",
+    "provenance",
+    "sourceRefs",
+    "evidenceEventIds",
+    "counterEvidenceEventIds"
+  ],
+  "properties": {
+    "debugRecordVersion": {
+      "const": "0.1"
+    },
+    "eventId": {
+      "$ref": "common.schema.json#/$defs/id"
+    },
+    "caseId": {
+      "$ref": "common.schema.json#/$defs/caseId"
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "recordedAt": {
+      "$ref": "common.schema.json#/$defs/timestamp"
+    },
+    "occurredOn": {
+      "$ref": "common.schema.json#/$defs/date"
+    },
+    "kind": {
+      "enum": [
+        "report",
+        "history",
+        "source-inspection",
+        "hypothesis",
+        "remediation",
+        "outcome",
+        "lifecycle"
+      ]
+    },
+    "claim": {
+      "type": "string",
+      "minLength": 1
+    },
+    "evidenceStatus": {
+      "enum": [
+        "reported",
+        "historical",
+        "verified-in-source",
+        "verified-by-test",
+        "observed-in-browser",
+        "proposed",
+        "unknown"
+      ]
+    },
+    "provenance": {
+      "$ref": "common.schema.json#/$defs/provenance"
+    },
+    "sourceRefs": {
+      "type": "array",
+      "items": {
+        "$ref": "common.schema.json#/$defs/reference"
+      },
+      "uniqueItems": true
+    },
+    "evidenceEventIds": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "counterEvidenceEventIds": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "proof": {
+      "$ref": "common.schema.json#/$defs/proof"
+    },
+    "hypothesisId": {
+      "$ref": "common.schema.json#/$defs/id"
+    },
+    "hypothesisState": {
+      "enum": [
+        "unverified",
+        "supported",
+        "refuted",
+        "confirmed"
+      ]
+    },
+    "scope": {
+      "enum": [
+        "source",
+        "automated",
+        "browser"
+      ]
+    },
+    "state": {
+      "enum": [
+        "open",
+        "investigating",
+        "closed"
+      ]
+    },
+    "outcomeStatus": {
+      "enum": [
+        "unverified",
+        "verified",
+        "failed"
+      ]
+    }
+  },
+  "additionalProperties": true
+}

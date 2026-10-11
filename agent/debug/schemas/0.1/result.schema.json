@@ -1,0 +1,152 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://redown.dev/debug/0.1/result.schema.json",
+  "type": "object",
+  "required": [
+    "debugApiVersion",
+    "debugRecordVersion",
+    "data",
+    "sourceRefs",
+    "recordRefs",
+    "provenance",
+    "evidenceStatus",
+    "freshness",
+    "explanation"
+  ],
+  "properties": {
+    "debugApiVersion": {
+      "const": "0.1"
+    },
+    "debugRecordVersion": {
+      "const": "0.1"
+    },
+    "data": {},
+    "sourceRefs": {
+      "type": "array",
+      "items": {
+        "$ref": "common.schema.json#/$defs/reference"
+      }
+    },
+    "recordRefs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "path",
+          "sha256"
+        ],
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "required": [
+        "sourceType",
+        "reviewStatus"
+      ],
+      "properties": {
+        "sourceType": {
+          "enum": [
+            "explicit",
+            "inferred",
+            "imported",
+            "historical",
+            "agent-proposed"
+          ]
+        },
+        "reviewStatus": {
+          "enum": [
+            "accepted",
+            "unreviewed",
+            "rejected"
+          ]
+        }
+      },
+      "additionalProperties": true
+    },
+    "evidenceStatus": {
+      "const": "unknown"
+    },
+    "freshness": {
+      "type": "object",
+      "required": [
+        "status",
+        "findings",
+        "scope"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "current",
+            "stale",
+            "unknown"
+          ]
+        },
+        "findings": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "scope": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "explanation": {
+      "type": "string"
+    },
+    "requestId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._-]{1,80}$"
+    },
+    "error": {
+      "type": "object",
+      "required": [
+        "code",
+        "message",
+        "details"
+      ],
+      "properties": {
+        "code": {
+          "type": "string",
+          "pattern": "^[a-z]+(?:-[a-z]+)*$"
+        },
+        "message": {
+          "type": "string"
+        },
+        "details": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true,
+  "allOf": [
+    {
+      "if": {
+        "required": [
+          "error"
+        ]
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "null"
+          }
+        }
+      }
+    }
+  ]
+}

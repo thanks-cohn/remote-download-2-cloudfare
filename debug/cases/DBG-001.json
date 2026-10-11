@@ -1,0 +1,38 @@
+{
+  "debugRecordVersion": "0.1",
+  "caseId": "DBG-001",
+  "summary": "Nested editor cannot reliably append deeper children without ancestor reselection",
+  "symptom": "Nested Mode cannot add folders beyond approximately two levels unless the bucket is reselected.",
+  "impact": "Blocks deep Nested settings configuration; exact runtime transfer impact is unverified.",
+  "severity": "high",
+  "initialState": "open",
+  "environment": "Reported Chrome extension settings; browser/OS/provider versions and live state unknown.",
+  "firstSeen": "2026-10-10",
+  "privacy": "public-sanitized",
+  "fingerprints": [
+    "nested-editor.child-disabled-after-ready",
+    "nested-editor.ancestor-reselection-workaround"
+  ],
+  "unknowns": [
+    "Chrome reproduction and exact visible depth threshold",
+    "Actual depth-five context-menu creation and transfer destination",
+    "Independent provider-listing or Chrome menu-depth defects",
+    "Remediation, regression tests and deployed outcome"
+  ],
+  "operationIds": [
+    "cfCreateFolder",
+    "cfFolderChildren",
+    "context-menu-transfer"
+  ],
+  "foreverLinks": {
+    "status": "unknown",
+    "links": [],
+    "reason": "No accepted ReDown Forever model or resolvable entity IDs exist."
+  },
+  "provenance": {
+    "sourceType": "imported",
+    "collector": "Codex companion import",
+    "sourceReference": "docs/debug/DBG-001_NESTED_CHILD_DEPTH_DISABLED_STATE.md",
+    "reviewStatus": "unreviewed"
+  }
+}

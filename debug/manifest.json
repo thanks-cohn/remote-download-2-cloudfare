@@ -1,0 +1,10 @@
+{
+  "debugRecordVersion": "0.1",
+  "cases": [
+    {
+      "caseId": "DBG-001",
+      "incidentPath": "debug/cases/DBG-001.json",
+      "historyPath": "debug/cases/DBG-001.events.jsonl"
+    }
+  ]
+}

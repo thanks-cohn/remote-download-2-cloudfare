@@ -1,0 +1,231 @@
+Baseline
+$ npm test
+> remote-asset-ingest@0.1.0 test
+> node --test tests/*.test.mjs
+
+✔ offline discovery advertises only implemented operations and distinct versions (104.969681ms)
+✔ operation descriptions retain exact destination, side effect and coverage limits (36.04082ms)
+✔ errors are deterministic, exact-id and version aware without echoing arbitrary input (417.282973ms)
+✔ unknown Forever mappings never become accepted records or a conformance claim (27.163537ms)
+✔ reference inspection detects content drift, missing anchors/files and unsafe paths (1.520946ms)
+✔ CLI works outside checkout, emits one JSON envelope and uses exit 2 for errors (558.396511ms)
+✔ catalog IDs, evidence labels, source hashes and references are internally consistent (59.266638ms)
+✔ portable request fixtures and JSON envelope contract (198.685989ms)
+✔ M0 inventory covers every literal message branch without inventing handlers (3.309282ms)
+✔ private WEBP preview reads nested keys without a Worker or background messaging (44.637375ms)
+✔ downloads use a header, keep credentials out of URLs and sanitize filenames (2.297207ms)
+✔ concurrent expired requests refresh rotating credentials once (2.10708ms)
+✔ 401 refresh retries a private read and denied reads report failure (2.187426ms)
+✔ oversized preview stops without allocating an object URL (1.64454ms)
+✔ preview failure replaces spinner and download rejection ends progress (1.775649ms)
+✖ click creates a visible window before network navigation; repeated clicks focus it (58.317907ms)
+✖ successful callback exchanges PKCE and verifies access before saving token (6.669821ms)
+✖ callback resumes after service worker restart from session state (4.289651ms)
+✖ unrelated tab, subframe, lookalike host, and wrong callback path are ignored (1.097368ms)
+✖ state mismatch fails without token exchange and allows a fresh retry (1.065821ms)
+✖ denied consent and missing authorization code fail cleanly (2.19196ms)
+✖ closed popup releases attempt and stale window is replaced on next click (3.762126ms)
+✖ expired attempt clears secrets, closes popup, and permits retry (1.009176ms)
+✖ failed API verification never stores an access token (2.492043ms)
+✖ duplicate navigation events exchange a code only once (3.299835ms)
+✖ verification network stall aborts and releases the attempt (7.262847ms)
+✖ popup creation errors are returned instead of leaving an in-flight lock (3.962164ms)
+✔ settings opens and completes Cloudflare login with no background worker or messaging (48.200016ms)
+✖ settings and worker observing the same callback exchange the code once across contexts (2.695361ms)
+✔ two settings contexts share one visible sign-in window (10.702028ms)
+✖ Worker deployments cannot overlap and a failed deployment releases the lock (3.441322ms)
+✔ same-bucket transfers stream objects and preserve metadata (86.627041ms)
+✔ cross-bucket transfers stay Worker-to-Worker and keep-both resolves conflicts (8.95457ms)
+✔ folder markers, properties, and batched deletes are real R2 operations (5.551845ms)
+✔ private Explorer reads require auth while explicitly enabled public assets still work (6.54664ms)
+✔ short-lived private preview URLs support ranges for text, PDF, and GLB (15.575398ms)
+✔ ZIP and CBZ archives are listed as virtual folders and selected entries extract safely (10.873204ms)
+✔ archive traversal and malformed archives are rejected (3.314219ms)
+✔ selection never fills the new-name field, and preserves an independently typed draft (106.080062ms)
+✔ Add child and Create use the exact parent path; actual dropdown children stay scoped (53.16002ms)
+✔ hiding a nested menu preserves its hierarchy and failed creation preserves the draft (85.770919ms)
+✔ native nested menu targets every verified depth and offers Send here for parents (6.381338ms)
+✔ legacy paths migrate without modifying old configuration or writing remote folders (21.719229ms)
+✔ nested saving retains provisioned worker credentials and new Explorer profiles through autosave (6.998983ms)
+✔ one global mode prevents Simple/Nested collisions and puts nested buckets directly under REDOWN (7.557988ms)
+✖ settings mode checkbox saves only the active mode and keeps both destination configurations (42.048931ms)
+✔ native menu mode checkbox changes the same saved setting without downloading anything (2.352389ms)
+ℹ tests 47
+ℹ suites 0
+ℹ pass 32
+ℹ fail 15
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 3004.248628
+
+Targeted
+$ node --test tests/debug-api.test.mjs tests/agent-api.test.mjs tests/cloudflare-files.test.mjs tests/explorer-worker.test.mjs
+✔ offline discovery advertises only implemented operations and distinct versions (58.360958ms)
+✔ operation descriptions retain exact destination, side effect and coverage limits (27.404126ms)
+✔ errors are deterministic, exact-id and version aware without echoing arbitrary input (134.260788ms)
+✔ unknown Forever mappings never become accepted records or a conformance claim (14.943587ms)
+✔ reference inspection detects content drift, missing anchors/files and unsafe paths (1.723355ms)
+✔ CLI works outside checkout, emits one JSON envelope and uses exit 2 for errors (302.890927ms)
+✔ catalog IDs, evidence labels, source hashes and references are internally consistent (11.334687ms)
+✔ portable request fixtures and JSON envelope contract (84.691707ms)
+✔ M0 inventory covers every literal message branch without inventing handlers (1.077434ms)
+✔ private WEBP preview reads nested keys without a Worker or background messaging (36.508095ms)
+✔ downloads use a header, keep credentials out of URLs and sanitize filenames (1.410798ms)
+✔ concurrent expired requests refresh rotating credentials once (3.545828ms)
+✔ 401 refresh retries a private read and denied reads report failure (2.005274ms)
+✔ oversized preview stops without allocating an object URL (1.836091ms)
+✔ preview failure replaces spinner and download rejection ends progress (1.631175ms)
+✔ real discovery, case, history, filters and validation are deterministic and honest (13.862988ms)
+✔ original case and proposal Markdown bytes are retained from pinned upstream (0.405323ms)
+✔ archived 0.1 semantic golden, unknown fields and inferred provenance survive JSON round trips (1.009292ms)
+✔ portable structural fixtures and frozen schema assertions match the lightweight evaluator (0.885061ms)
+✔ new unknown optional fields are retained without reinterpreting lifecycle or evidence (1.353945ms)
+✔ missing case, bad requests, unsupported operations/versions have stable sanitized errors (4.079024ms)
+✔ malformed JSON, non-UTF8, blank lines and truncated JSONL never yield partial query success (5.924315ms)
+✔ required fields, types, enum values, bounds and array uniqueness are actually checked (5.540029ms)
+✔ every record format version is rejected explicitly; missing versions are structural failures (2.068613ms)
+✔ duplicate case/event IDs and paths, mismatched case IDs and missing event links are not hidden (4.767649ms)
+✔ recorded chronology and exact physical sequence are validated; dates are never invented or sorted (4.375172ms)
+✔ deterministic list ordering and filter semantics do not depend on manifest order (1.855112ms)
+✔ source hash drift, missing anchors and absence are freshness warnings, not falsified historical claims (3.388129ms)
+✔ path traversal, absolute/Windows paths, NUL and escaping symlinks are rejected for records and evidence (5.471052ms)
+✔ internal symlinks work; directories, unavailable roots/files and oversized records fail deterministically (6.718704ms)
+✔ operation references resolve exactly; Forever mappings remain unknown rather than invented (2.069141ms)
+✔ source confirmation is scoped and requires proof; test pointers never imply test success (3.561363ms)
+✔ hypothesis revisions and counterevidence preserve earlier beliefs and latest projection (2.179832ms)
+✔ closure requires recorded automation and browser outcomes; reopening retains closure evidence (2.877616ms)
+✔ invalid hypothesis, outcome and lifecycle payloads cannot masquerade as verified results (3.431885ms)
+✔ immutable API snapshots avoid rescans and refresh only when a new reader is created (1.169069ms)
+✔ CLI adapter emits one JSON envelope, legible summaries and exact error/validation exits (13.765323ms)
+✔ actual CLI entry point works outside the checkout and exits 2 for invalid corpus validation (149.464556ms)
+✔ queries never modify the canonical corpus or cited historical evidence (4.732196ms)
+✔ same-bucket transfers stream objects and preserve metadata (42.246543ms)
+✔ cross-bucket transfers stay Worker-to-Worker and keep-both resolves conflicts (5.087391ms)
+✔ folder markers, properties, and batched deletes are real R2 operations (18.394464ms)
+✔ private Explorer reads require auth while explicitly enabled public assets still work (7.67147ms)
+✔ short-lived private preview URLs support ranges for text, PDF, and GLB (10.585876ms)
+✔ ZIP and CBZ archives are listed as virtual folders and selected entries extract safely (10.519664ms)
+✔ archive traversal and malformed archives are rejected (3.127868ms)
+ℹ tests 46
+ℹ suites 0
+ℹ pass 46
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1304.19801
+
+After
+$ npm test
+> remote-asset-ingest@0.1.0 test
+> node --test tests/*.test.mjs
+
+✔ offline discovery advertises only implemented operations and distinct versions (68.703347ms)
+✔ operation descriptions retain exact destination, side effect and coverage limits (28.181266ms)
+✔ errors are deterministic, exact-id and version aware without echoing arbitrary input (129.981847ms)
+✔ unknown Forever mappings never become accepted records or a conformance claim (15.911273ms)
+✔ reference inspection detects content drift, missing anchors/files and unsafe paths (1.499967ms)
+✔ CLI works outside checkout, emits one JSON envelope and uses exit 2 for errors (375.237594ms)
+✔ catalog IDs, evidence labels, source hashes and references are internally consistent (10.910518ms)
+✔ portable request fixtures and JSON envelope contract (77.644154ms)
+✔ M0 inventory covers every literal message branch without inventing handlers (1.269344ms)
+✔ private WEBP preview reads nested keys without a Worker or background messaging (33.751164ms)
+✔ downloads use a header, keep credentials out of URLs and sanitize filenames (1.626474ms)
+✔ concurrent expired requests refresh rotating credentials once (5.285265ms)
+✔ 401 refresh retries a private read and denied reads report failure (1.879585ms)
+✔ oversized preview stops without allocating an object URL (1.872277ms)
+✔ preview failure replaces spinner and download rejection ends progress (2.634368ms)
+✖ click creates a visible window before network navigation; repeated clicks focus it (23.812963ms)
+✖ successful callback exchanges PKCE and verifies access before saving token (1.233812ms)
+✖ callback resumes after service worker restart from session state (1.110404ms)
+✖ unrelated tab, subframe, lookalike host, and wrong callback path are ignored (1.017071ms)
+✖ state mismatch fails without token exchange and allows a fresh retry (1.117923ms)
+✖ denied consent and missing authorization code fail cleanly (1.057793ms)
+✖ closed popup releases attempt and stale window is replaced on next click (2.174702ms)
+✖ expired attempt clears secrets, closes popup, and permits retry (1.070915ms)
+✖ failed API verification never stores an access token (1.061546ms)
+✖ duplicate navigation events exchange a code only once (1.174053ms)
+✖ verification network stall aborts and releases the attempt (1.056198ms)
+✖ popup creation errors are returned instead of leaving an in-flight lock (1.03051ms)
+✔ settings opens and completes Cloudflare login with no background worker or messaging (17.925211ms)
+✖ settings and worker observing the same callback exchange the code once across contexts (1.168669ms)
+✔ two settings contexts share one visible sign-in window (2.619915ms)
+✖ Worker deployments cannot overlap and a failed deployment releases the lock (1.080538ms)
+✔ real discovery, case, history, filters and validation are deterministic and honest (12.810332ms)
+✔ original case and proposal Markdown bytes are retained from pinned upstream (0.370717ms)
+✔ archived 0.1 semantic golden, unknown fields and inferred provenance survive JSON round trips (0.947205ms)
+✔ portable structural fixtures and frozen schema assertions match the lightweight evaluator (0.815016ms)
+✔ new unknown optional fields are retained without reinterpreting lifecycle or evidence (1.321225ms)
+✔ missing case, bad requests, unsupported operations/versions have stable sanitized errors (4.071636ms)
+✔ malformed JSON, non-UTF8, blank lines and truncated JSONL never yield partial query success (6.400159ms)
+✔ required fields, types, enum values, bounds and array uniqueness are actually checked (5.83976ms)
+✔ every record format version is rejected explicitly; missing versions are structural failures (1.97673ms)
+✔ duplicate case/event IDs and paths, mismatched case IDs and missing event links are not hidden (3.766645ms)
+✔ recorded chronology and exact physical sequence are validated; dates are never invented or sorted (3.68605ms)
+✔ deterministic list ordering and filter semantics do not depend on manifest order (1.608373ms)
+✔ source hash drift, missing anchors and absence are freshness warnings, not falsified historical claims (3.689132ms)
+✔ path traversal, absolute/Windows paths, NUL and escaping symlinks are rejected for records and evidence (4.943745ms)
+✔ internal symlinks work; directories, unavailable roots/files and oversized records fail deterministically (6.425674ms)
+✔ operation references resolve exactly; Forever mappings remain unknown rather than invented (2.063269ms)
+✔ source confirmation is scoped and requires proof; test pointers never imply test success (3.20084ms)
+✔ hypothesis revisions and counterevidence preserve earlier beliefs and latest projection (1.504409ms)
+✔ closure requires recorded automation and browser outcomes; reopening retains closure evidence (3.146911ms)
+✔ invalid hypothesis, outcome and lifecycle payloads cannot masquerade as verified results (3.393908ms)
+✔ immutable API snapshots avoid rescans and refresh only when a new reader is created (1.1415ms)
+✔ CLI adapter emits one JSON envelope, legible summaries and exact error/validation exits (13.948242ms)
+✔ actual CLI entry point works outside the checkout and exits 2 for invalid corpus validation (153.639174ms)
+✔ queries never modify the canonical corpus or cited historical evidence (4.553339ms)
+✔ same-bucket transfers stream objects and preserve metadata (49.168913ms)
+✔ cross-bucket transfers stay Worker-to-Worker and keep-both resolves conflicts (5.997801ms)
+✔ folder markers, properties, and batched deletes are real R2 operations (5.591532ms)
+✔ private Explorer reads require auth while explicitly enabled public assets still work (4.740793ms)
+✔ short-lived private preview URLs support ranges for text, PDF, and GLB (7.551476ms)
+✔ ZIP and CBZ archives are listed as virtual folders and selected entries extract safely (8.485549ms)
+✔ archive traversal and malformed archives are rejected (2.399739ms)
+✔ selection never fills the new-name field, and preserves an independently typed draft (114.718224ms)
+✔ Add child and Create use the exact parent path; actual dropdown children stay scoped (36.988761ms)
+✔ hiding a nested menu preserves its hierarchy and failed creation preserves the draft (31.412416ms)
+✔ native nested menu targets every verified depth and offers Send here for parents (1.674326ms)
+✔ legacy paths migrate without modifying old configuration or writing remote folders (13.160714ms)
+✔ nested saving retains provisioned worker credentials and new Explorer profiles through autosave (3.884605ms)
+✔ one global mode prevents Simple/Nested collisions and puts nested buckets directly under REDOWN (2.648496ms)
+✖ settings mode checkbox saves only the active mode and keeps both destination configurations (10.636813ms)
+✔ native menu mode checkbox changes the same saved setting without downloading anything (2.554465ms)
+ℹ tests 71
+ℹ suites 0
+ℹ pass 56
+ℹ fail 15
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2095.647605
+
+$ python tests/debug-schema-conformance.py work/schema-results.json
+Independent JSON Schema: 5 schemas valid; 72 record/result/constraint checks passed.
+
+$ npm run check
+> remote-asset-ingest@0.1.0 check
+> node --check extension/cloudflare-api.js && node --check extension/cloudflare-auth.js && node --check extension/background.js && node --check extension/nested-locations.js && node --check extension/nested-menu-editor.js && node --check extension/options.js && node --check worker/src/index.js
+Exit: 0
+
+$ node --check agent/debug/api.mjs
+$ node --check agent/debug/cli.mjs
+Both exit: 0
+
+Baseline/after exact failing test identities (unchanged):
+test at tests/cloudflare-login.test.mjs:102:1
+test at tests/cloudflare-login.test.mjs:123:1
+test at tests/cloudflare-login.test.mjs:145:1
+test at tests/cloudflare-login.test.mjs:154:1
+test at tests/cloudflare-login.test.mjs:165:1
+test at tests/cloudflare-login.test.mjs:174:1
+test at tests/cloudflare-login.test.mjs:185:1
+test at tests/cloudflare-login.test.mjs:197:1
+test at tests/cloudflare-login.test.mjs:208:1
+test at tests/cloudflare-login.test.mjs:217:1
+test at tests/cloudflare-login.test.mjs:224:1
+test at tests/cloudflare-login.test.mjs:236:1
+test at tests/cloudflare-login.test.mjs:263:1
+test at tests/cloudflare-login.test.mjs:281:1
+test at tests/nested-locations.test.mjs:133:1

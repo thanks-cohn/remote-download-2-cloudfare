@@ -1,0 +1,13 @@
+{
+  "debugRecordVersion": "0.1",
+  "cases": [
+    {
+      "caseId": "DBG-900",
+      "incidentPath": "tests/fixtures/debug/v0.1/incident.json",
+      "historyPath": "tests/fixtures/debug/v0.1/history.jsonl"
+    }
+  ],
+  "futureOptional": {
+    "owner": "example.org"
+  }
+}

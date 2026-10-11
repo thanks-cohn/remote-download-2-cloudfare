@@ -1,0 +1,19 @@
+$ node agent/debug/cli.mjs getIncident DBG-001
+DBG-001: Nested Mode cannot add folders beyond approximately two levels unless the bucket is reselected.
+Source evidence: run snapshots disabled controls and restores them after the task. Creation enables + Child inside that task, so restoration re-disables it; selection changes readiness without reconciling + Child. Recursive rows have no explicit two-level maximum.
+Outcome: Case remains open. No browser reproduction, editor correction, DBG-001 regression pass or deployment verification was performed in the historical investigation or this records implementation.
+Still unknown: Chrome reproduction and exact visible depth threshold; Actual depth-five context-menu creation and transfer destination; Independent provider-listing or Chrome menu-depth defects; Remediation, regression tests and deployed outcome
+Record freshness: current; overall behavioral evidence: unknown
+Lifecycle: open; 9 retained events.
+Provenance: imported/unreviewed
+Proposed next verification: Proposed correction: separate temporary action locks from semantic eligibility and reconcile current row state after pending work. First add failing fresh-child select/create tests, then depth-five persistence/menu/transfer checks and a Chrome smoke test. Do not merely enable + Child inside run.
+Reference (document): docs/debug/PROPOSED_CHANGES.md — 2.1 Root-cause correction
+Reference (document): docs/debug/DBG-001_NESTED_CHILD_DEPTH_DISABLED_STATE.md — Minimal reproduction and tests to add
+Reference (test): tests/nested-locations.test.mjs — Add child and Create use the exact parent path; actual dropdown children stay scoped
+Reference (source): extension/nested-menu-editor.js — async function run
+Reference (source): extension/nested-menu-editor.js — el.disabled=previous[index]
+Reference (source): extension/nested-menu-editor.js — function folderRow
+Reference (source): extension/nested-menu-editor.js — M.setLocation(node,select.value)
+Reference (source): extension/nested-menu-editor.js — add.disabled=!parentReady || !node.ready
+
+Exit: 0
