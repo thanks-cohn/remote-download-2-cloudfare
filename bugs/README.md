@@ -383,6 +383,17 @@ In **Upload from computer**, after choosing the Cloudflare R2 bucket `works`, th
 
 **Scope:** This tightens BUG-013's wrong-bucket/mixed-prefix report. No implementation change or browser verification has yet occurred for this clarification.
 
+## Source patch — Upload from Computer location separation (human testing pending)
+
+**Status:** Source changes `79c90c4` and new regression tests `74896f4` committed; automated test execution and installed Chrome testing **pending**.
+
+- Existing folder selections no longer initialize the adjacent creation input. Typing into that input no longer changes the selected upload destination or creates a remote location until an explicit `+` action.
+- Selecting an existing child no longer invokes the folder-materialization call. Bucket-scoped location loading now excludes unverified saved preset prefixes, resets when the left bucket changes, and ignores stale responses from previously selected buckets.
+- Added tests for blank creation inputs after selection, immediate child lists isolated to the selected bucket, and out-of-order bucket lookup responses.
+- **Limits:** The Upload builder still rerenders its own rows when the user changes a selected folder; broader layout, pagination and public URL features are separate issues. Regression tests are committed but **not run** in this session because the execution container cannot reach GitHub. No Chrome/provider outcome is asserted.
+
+**History:** [DBG-003](../docs/debug/DBG-003_UPLOAD_LOCATION_BINDING.md).
+
 ## BUG-014 — Upload from Computer: choosing an existing location fills the new-name input
 
 **Status:** Open · user-reported regression (October 10, 2026); runtime mechanism not yet verified
