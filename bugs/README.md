@@ -2,6 +2,14 @@
 
 Open reports recorded on October 3, 2026 (America/Chicago), against the v0.5.12 interface. These are reports and acceptance criteria, not completed fixes.
 
+## Fixed — DBG-001: Nested editor cannot continue adding deep children (human testing pending)
+
+**Status:** Fixed in source (`538006a`), regression tests added (`2a5e061`); **human Chrome testing pending**. Automated tests have not been run in this session because the checkout could not be retrieved from GitHub in the execution environment.
+
+The Nested editor's asynchronous `run()` handler used to restore an outdated snapshot of disabled buttons after folder selection/creation. Its `+ Child` action could therefore remain disabled although the folder was ready. Row-specific eligibility is now recalculated after task completion for root selection/creation and folder selection/creation. Added regression tests for selection and multi-level creation. This is a **source fix**, not a verified browser outcome; do not infer that other Chrome context-menu depth constraints or R2 issues have been resolved.
+
+**Human acceptance:** Reload the extension, select and create descendants at least five levels deep without reselecting the bucket, verify the full right-click menu hierarchy and exact destination after a safe test transfer, then report any unexpected errors. See [DBG-001](../docs/debug/DBG-001_NESTED_CHILD_DEPTH_DISABLED_STATE.md).
+
 ## BUG-001 — Bucket root must be a selectable nested destination
 
 **Status:** Open · user-reported behavior / usability defect
