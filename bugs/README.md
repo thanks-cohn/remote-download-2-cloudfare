@@ -82,6 +82,16 @@ In the **Nested · Cloudflare locations** settings panel, the user reports that 
 **Relevant code:** `extension/nested-menu-editor.js` currently calls `render(context.profiles())` from selection handling / operation completion and replaces the container's children. Treat that as an investigation point, not proof of every aspect of the user's reported movement.
 
 
+## Source fix — Simple location row clearing and explicit directory creation (human testing pending)
+
+**Status:** Source implementation committed (`7c1b0d6`, `3ac4496`, `376d933`); regression tests added (`b6f2cda`); **automated test execution and human Chrome testing pending**.
+
+The primary and additional Simple right-click destinations now share a small row-based path editor. Every row has an `×` that clears the selected segment and invalidates deeper selections **without removing the lower rows** or deleting R2 data. Lower rows remain available to choose children beneath a replacement parent. Every row also exposes a separate new-directory input and explicit `Create` button. Selection from a dropdown never copies the existing folder name into that input. Only the relevant path subtree is rebuilt; surrounding presets and settings controls remain mounted.
+
+**Review limitations:** This is an initial implementation, not an independently executed/browser-verified correction. Regression tests were committed but not run in the current session because the execution container could not resolve GitHub to obtain a checkout. Existing issues concerning multiple independent presets, wider Simple panel rendering, real R2 path semantics, asynchronous interactions and UI polish require Chrome acceptance.
+
+**Human acceptance:** Under Simple Mode, open a destination `bucket/one/two/three`, click `×` on `one`, verify three folder rows remain visible with no selections, reselect a different root folder and its immediate child without reloading the entire settings page. Create a new folder at both root and deeper levels; verify the creation input is initially blank, no folder is created by selection alone, and the right-click option points to the intended full path. Verify persistence after reopening the extension. Related: BUG-005, BUG-016 and the [debugging case](../docs/debug/DBG-002_SIMPLE_LOCATION_ROWS.md).
+
 ## BUG-005 — Cloudflare Simple mode cannot add multiple independent locations
 
 **Status:** Open · source-confirmed editor limitation / user-reported requirement
