@@ -1,0 +1,305 @@
+{
+  "$defs": {
+    "operation": {
+      "additionalProperties": true,
+      "properties": {
+        "coverage": {
+          "type": "string"
+        },
+        "errors": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "evidenceStatus": {
+          "enum": [
+            "verified-in-source",
+            "verified-by-test",
+            "documented-intent",
+            "inferred",
+            "proposed",
+            "unknown"
+          ]
+        },
+        "foreverLinks": {
+          "additionalProperties": true,
+          "properties": {
+            "links": {
+              "maxItems": 0,
+              "type": "array"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "status": {
+              "const": "unknown"
+            },
+            "supportedModelVersions": {
+              "maxItems": 0,
+              "type": "array"
+            }
+          },
+          "required": [
+            "status",
+            "supportedModelVersions",
+            "links",
+            "reason"
+          ],
+          "type": "object"
+        },
+        "id": {
+          "type": "string"
+        },
+        "input": {
+          "type": "string"
+        },
+        "output": {
+          "type": "string"
+        },
+        "path": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "security": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "sideEffects": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "sourceRefs": {
+          "items": {
+            "$ref": "#/$defs/sourceRef"
+          },
+          "type": "array"
+        },
+        "state": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "testRefs": {
+          "items": {
+            "$ref": "#/$defs/sourceRef"
+          },
+          "type": "array"
+        },
+        "uiOrigin": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "summary",
+        "input",
+        "output",
+        "uiOrigin",
+        "coverage",
+        "path",
+        "security",
+        "state",
+        "sideEffects",
+        "errors",
+        "sourceRefs",
+        "testRefs",
+        "evidenceStatus",
+        "foreverLinks"
+      ],
+      "type": "object"
+    },
+    "sourceRef": {
+      "additionalProperties": true,
+      "properties": {
+        "path": {
+          "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        },
+        "symbol": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "symbol",
+        "sha256"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": true,
+  "properties": {
+    "apiVersion": {
+      "const": "0.1"
+    },
+    "catalogVersion": {
+      "const": "0.1"
+    },
+    "discoveryLimits": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "operations": {
+      "items": {
+        "$ref": "#/$defs/operation"
+      },
+      "type": "array"
+    },
+    "overview": {
+      "additionalProperties": true,
+      "properties": {
+        "boundaries": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "commands": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "entryPoints": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "evidenceStatus": {
+          "enum": [
+            "verified-in-source",
+            "verified-by-test",
+            "documented-intent",
+            "inferred",
+            "proposed",
+            "unknown"
+          ]
+        },
+        "sourceRefs": {
+          "items": {
+            "$ref": "#/$defs/sourceRef"
+          },
+          "type": "array"
+        },
+        "status": {
+          "items": {
+            "additionalProperties": true,
+            "properties": {
+              "claim": {
+                "type": "string"
+              },
+              "evidenceStatus": {
+                "enum": [
+                  "verified-in-source",
+                  "verified-by-test",
+                  "documented-intent",
+                  "inferred",
+                  "proposed",
+                  "unknown"
+                ]
+              },
+              "note": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "claim",
+              "evidenceStatus"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "summary": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "summary",
+        "evidenceStatus",
+        "entryPoints",
+        "boundaries",
+        "commands",
+        "status",
+        "sourceRefs"
+      ],
+      "type": "object"
+    },
+    "provenance": {
+      "additionalProperties": true,
+      "properties": {
+        "authority": {
+          "type": "string"
+        },
+        "reviewStatus": {
+          "const": "unreviewed"
+        },
+        "sourceType": {
+          "const": "agent-proposed"
+        }
+      },
+      "required": [
+        "sourceType",
+        "reviewStatus",
+        "authority"
+      ],
+      "type": "object"
+    },
+    "sourceCommit": {
+      "pattern": "^[a-f0-9]{40}$",
+      "type": "string"
+    },
+    "sourceRevisions": {
+      "items": {
+        "additionalProperties": true,
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "sha256": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "sha256"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "apiVersion",
+    "catalogVersion",
+    "sourceCommit",
+    "provenance",
+    "discoveryLimits",
+    "overview",
+    "sourceRevisions",
+    "operations"
+  ],
+  "title": "ReDown internal agent catalog 0.1",
+  "type": "object"
+}
