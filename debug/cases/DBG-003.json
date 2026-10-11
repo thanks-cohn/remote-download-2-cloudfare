@@ -1,0 +1,37 @@
+{
+  "debugRecordVersion": "0.1",
+  "caseId": "DBG-003",
+  "summary": "Upload from Computer mixes existing selection and creation draft; folder listings can mix bucket data",
+  "symptom": "Existing child selection populates new-name input, and right-side options may include saved prefixes from another bucket.",
+  "impact": "Misleading destinations and risk of unintentional path creation or incorrect bucket selection.",
+  "severity": "high",
+  "initialState": "open",
+  "environment": "Chrome extension settings and Cloudflare R2, live version/environment not verified.",
+  "firstSeen": "2026-10-10",
+  "privacy": "public-sanitized",
+  "fingerprints": [
+    "upload-builder.selected-name-copied-to-draft",
+    "upload-builder.cross-bucket-prefix-contamination"
+  ],
+  "unknowns": [
+    "Automated test execution",
+    "Installed Chrome verification",
+    "R2 success and failure semantics",
+    "Large paginated folder listings"
+  ],
+  "operationIds": [
+    "cfFolderChildren",
+    "cfCreateFolder"
+  ],
+  "foreverLinks": {
+    "status": "unknown",
+    "links": [],
+    "reason": "No accepted ReDown Forever model or entity IDs."
+  },
+  "provenance": {
+    "sourceType": "agent-proposed",
+    "collector": "ChatGPT debug investigation",
+    "sourceReference": "docs/debug/DBG-003_UPLOAD_LOCATION_BINDING.md",
+    "reviewStatus": "unreviewed"
+  }
+}
