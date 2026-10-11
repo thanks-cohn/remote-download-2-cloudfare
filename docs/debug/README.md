@@ -6,6 +6,9 @@ This is the persistent chronology of investigated defects. Preserve previous ent
 | --- | --- | --- | --- |
 | 2026-10-10 | [DBG-001 — Nested menu stops accepting deeper children](DBG-001_NESTED_CHILD_DEPTH_DISABLED_STATE.md) | **Source fix committed; human Chrome testing pending** | Stale disabled-state restoration diagnosed; row-local reconciliation correction committed (`538006a`), regression tests added (`2a5e061`). Execution and browser verification pending. |
 
+| 2026-10-10 | [DBG-002 — Simple location row redirection and creation](DBG-002_SIMPLE_LOCATION_ROWS.md) | **Source fix committed; automated and human Chrome testing pending** | Shared Simple path editor; reusable cleared descendants and explicit Create fields. |
+| 2026-10-10 | [DBG-003 — Upload from Computer location binding](DBG-003_UPLOAD_LOCATION_BINDING.md) | **Source fix committed; automated and human Chrome testing pending** | Separate existing-folder selection from creation drafts; isolate child lists to selected bucket and ignore stale lookups. |
+
 ## Debugging record policy
 
 1. New bugs receive a stable `DBG-###` ID and case file.
