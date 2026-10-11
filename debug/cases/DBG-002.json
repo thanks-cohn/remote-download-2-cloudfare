@@ -1,0 +1,38 @@
+{
+  "debugRecordVersion": "0.1",
+  "caseId": "DBG-002",
+  "summary": "Simple right-click menu location editor must support redirection and explicit creation without losing child rows",
+  "symptom": "Simple Mode lacked per-row path clearing and explicit creation, and could needlessly redraw folder selectors.",
+  "impact": "Editing menu destinations is cumbersome and may confuse selected folders with new names.",
+  "severity": "medium",
+  "initialState": "open",
+  "environment": "Chrome extension settings; exact installed browser version and live R2 outcomes unverified.",
+  "firstSeen": "2026-10-10",
+  "privacy": "public-sanitized",
+  "fingerprints": [
+    "simple-menu.parent-row-clear",
+    "simple-menu.directory-create-row",
+    "simple-menu.stale-descendant-selection"
+  ],
+  "unknowns": [
+    "Automated regression execution",
+    "Installed Chrome user-flow validation",
+    "R2 folder creation and correct right-click routing",
+    "Persistence across extension reload"
+  ],
+  "operationIds": [
+    "cfCreateFolder",
+    "cfFolderChildren"
+  ],
+  "foreverLinks": {
+    "status": "unknown",
+    "links": [],
+    "reason": "No accepted ReDown Forever model or entity IDs."
+  },
+  "provenance": {
+    "sourceType": "agent-proposed",
+    "collector": "ChatGPT source patch audit",
+    "sourceReference": "docs/debug/DBG-002_SIMPLE_LOCATION_ROWS.md",
+    "reviewStatus": "unreviewed"
+  }
+}
