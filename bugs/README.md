@@ -333,6 +333,21 @@ In **Upload from computer**, after choosing the Cloudflare R2 bucket `works`, th
 - Compare results from the left-selected `works` bucket against those for `extended` with `works` selected on the right, to reproduce and isolate the mismatch.
 
 
+### Clarification — strict separation of Bucket and Location selectors (October 10, 2026)
+
+**User requirement:** The **left** selector is the **only bucket selector**. The **right** selector is **not another bucket selector** and MUST contain exclusively the verified **immediate child folder names** of the bucket selected on the left. It MUST NOT list bucket names, unrelated account locations, stale profile defaults, or folders from any other bucket as choices.
+
+**Required semantics and tests:**
+- Left: select an account/bucket. Right: query that exact account + bucket at root prefix `""` and display only its immediate child folders.
+- The right selector must not provide alternative bucket selection, even if an actual child folder happens to share a bucket's name. Treat such a value strictly as a verified folder from the selected bucket, not a bucket; never substitute cached bucket names for directory results.
+- Descending into a selected right-side folder reveals only its own immediate children at the next location level. Do not flatten grandchildren into the initial selector.
+- On left bucket change, discard stale child options and selections, show a clear loading state, then repopulate from the new bucket's verified immediate children. Ignore late responses for old bucket requests.
+- For an empty bucket, show an honest empty-folder state; for lookup failure, show the error and Retry rather than using bucket lists or stale options as a fallback.
+- Test two buckets with overlapping folder names and distinct trees; ensure the right dropdown contains only the correct immediate children before/after rapid bucket switching.
+- Preserve **Create new location** as a separate empty draft field. Selecting an existing folder on the right must not copy the selection into the draft (see BUG-014).
+
+**Scope:** This tightens BUG-013's wrong-bucket/mixed-prefix report. No implementation change or browser verification has yet occurred for this clarification.
+
 ## BUG-014 — Upload from Computer: choosing an existing location fills the new-name input
 
 **Status:** Open · user-reported regression (October 10, 2026); runtime mechanism not yet verified
