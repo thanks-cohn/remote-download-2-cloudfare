@@ -331,3 +331,61 @@ In **Upload from computer**, after choosing the Cloudflare R2 bucket `works`, th
 - Clear or validate old selections before rendering descendants, and discard stale asynchronous responses if bucket selection changes while loading.
 - Preserve a visible **Loading folders…** state, distinguish incomplete results from empty folders, and surface lookup failures with retry.
 - Compare results from the left-selected `works` bucket against those for `extended` with `works` selected on the right, to reproduce and isolate the mismatch.
+
+
+## BUG-014 — Upload from Computer: choosing an existing location fills the new-name input
+
+**Status:** Open · user-reported regression (October 10, 2026); runtime mechanism not yet verified
+
+In the **Upload from Computer** location builder, selecting an existing folder from a dropdown also fills the adjacent text input intended for **creating** a new folder. The selected existing location appears twice in different roles, creating confusion and potentially implying that a duplicate directory will be created. This is distinct from the earlier cramped-layout defect and overlaps BUG-013's separation-of-selection requirement.
+
+**Expected behavior:** The dropdown represents the *existing selected location*. The text field represents an *optional, new, not-yet-created child name*. Selecting an existing folder MUST NOT copy its name into this text field. It should remain empty unless the user explicitly typed a draft.
+
+**Acceptance criteria:**
+- Select a bucket, then an existing location at any depth; the adjacent **New location / Create child** input stays empty.
+- If a user has manually typed a draft, selecting another existing location must not silently populate or overwrite it; if its parent changes, handle the draft explicitly and predictably.
+- The selected path appears once as a chosen existing destination; no duplicate segment is appended by selection alone.
+- Creating a new location requires explicit user action and must use the exact currently selected account/bucket/parent path.
+- Reopening and changing dropdowns does not generate extra folders, duplicate input text, or unintended Cloudflare writes.
+- Add a deterministic DOM regression for existing location selection and independent draft preservation in **Upload from Computer**, not merely in the Nested editor.
+
+**Investigation:** Inspect `extension/options.js` upload location state, row rendering, dropdown change handlers, `local-prefix`, cached prefixes, and new-name draft binding. Keep existing dropdowns and compact layout; do not redesign the panel to fix a data-binding bug. Cross-reference BUG-013 and its stale bucket/profile cache risk.
+
+## BUG-015 — Explorer and file previews should show a verified public URL alongside local blob preview URLs
+
+**Status:** Open · requested capability (October 10, 2026); bucket-by-bucket eligibility unknown
+
+A preview currently may have a browser-local `blob:` URL, useful for rendering locally, but it is not a durable publicly shareable address. For objects in a Cloudflare R2 bucket configured for public access with a resolvable public base/custom-domain URL, also show the **actual public URL**, without removing the blob-based preview option.
+
+**Expected behavior:** Expose distinct, plainly labeled **Local preview URL (blob)** and **Public URL** where applicable. A private bucket or inaccessible object must not display a fabricated public URL; show **Public URL unavailable — bucket/object not publicly accessible or not configured** when that is the supported finding.
+
+**Acceptance criteria:**
+- A local `blob:` preview can continue functioning for eligible files regardless of whether the bucket is public; label it as temporary and browser-local, not a sharable public link.
+- Where an R2 bucket has a verified public-domain/base URL and the object key is eligible, display its canonical object URL separately, with copy/open controls and correct URL encoding for nested keys and special characters.
+- Never assume `https://<bucket>.<provider-domain>/...` is public merely because a bucket exists. Resolve and verify configured public URL metadata and distinguish configured/verified/unverified/unavailable states.
+- Do not mistake authenticated Worker download/preview URLs or short-lived signed URLs for unrestricted public URLs. Do not leak credentials or private access tokens in UI, logs, or copied links.
+- A private bucket displays no invented public URL; do not automatically enable public bucket access merely to provide a link.
+- If public access changes, or an object is missing/blocked, present appropriate status and errors rather than promising a working public URL.
+- Preserve current preview/lightbox behavior and object identity. Test public/custom-domain, private, missing-domain, nested/Unicode key, and cross-account cases.
+
+**Investigation:** Inspect `extension/options.js` Explorer/preview URL handling, Cloudflare R2 bucket public endpoint metadata, profile configuration, stored per-object URLs, and authenticated blob creation. If public URL verification requires an extra network request, use an explicit bounded, safe check and honest freshness indication. This feature is **additive**, not a requirement to convert private objects into public files.
+
+## BUG-016 — Simple Mode settings unnecessarily rerender the entire panel after small edits
+
+**Status:** Open · user-reported UX/state regression (October 10, 2026); exact triggering handlers still to be traced
+
+In the **Simple right-click menu** settings panel, a small change to an existing selection or configuration causes the wider editor to reload/rebuild. This interrupts interaction and may reset focus, scroll, dropdown openness, draft names, or sibling row state.
+
+**Expected behavior:** Simple Mode should update only the changed row and dependent descendants. A dropdown selection or text-field change must not destroy and recreate unrelated settings UI. Preserve the already simple and usable design.
+
+**Acceptance criteria:**
+- Opening/closing a dropdown without changing its value causes no panel rerender or unnecessary location fetch.
+- Changing a bucket or existing folder updates only the affected row and dependent path segments; other destinations and profiles remain mounted and stable.
+- Typing in a new-name field does not recreate the panel, overwrite the draft, change scroll position, or lose keyboard focus.
+- Async completion, save failure and stale responses cannot undo more recent user selections or disable valid controls.
+- Updates to menu configuration persist and are reflected in the right-click menu without rebuilding the entire settings page unnecessarily.
+- Add DOM regression tests for rerender counts, focus/draft preservation, sibling identity and async out-of-order operations, including nested paths.
+- Preserve existing Simple Mode aesthetics and interaction patterns; prefer a narrowly scoped update/reconciliation over a redesign.
+
+**Investigation:** Trace `extension/options.js` Simple Mode rendering and profile save/refresh paths, relevant callbacks and bucket/folder fetches; distinguish a necessary native context-menu rebuild from an avoidable settings-panel DOM rebuild. Related but independent: BUG-004 (Nested Mode full-editor refresh), BUG-005 (multiple independent Simple destinations).
+
