@@ -472,6 +472,99 @@ async function chooseRightClickMode(nextMode){
 $("use-simple-menu").addEventListener("change",()=>chooseRightClickMode("simple"));
 $("use-nested-menu").addEventListener("change",()=>chooseRightClickMode("nested"));
 
+// Simple destinations share one path editor: dropdowns are selections, inputs are drafts.
+// Removing a level preserves lower rows as blank, reusable selectors; no R2 deletion.
+function simpleFolderPathEditor(profile, host, message, bucketName, initialPrefix, persist){
+  let parts=String(initialPrefix||"").split("/").filter(Boolean);
+  if(!parts.length)parts=[""];
+  let generation=0;
+  const drafts=new Map();
+  const option=(select,value,label)=>{const o=document.createElement("option");o.value=value;o.textContent=label;select.append(o);};
+  const prefix=()=>{const valid=[];for(const part of parts){if(!part)break;valid.push(part);}return valid.join("/");};
+  const commit=()=>persist(prefix());
+  const draw=async(from=0)=>{
+    const token=++generation;
+    if(from===0)host.replaceChildren();
+    else while(host.children.length>from)host.lastElementChild.remove();
+    for(let index=from;index<parts.length;index++){
+      if(token!==generation||!host.isConnected)return;
+      const row=document.createElement("div");row.className="location-level-row";
+      const selected=document.createElement("select");selected.className="location-level-select";
+      const input=document.createElement("input");input.type="text";input.className="location-level-input";
+      input.placeholder="New directory name";input.value=drafts.get(index)||"";
+      input.setAttribute("aria-label","New directory name at level "+(index+1));
+      input.addEventListener("input",()=>drafts.set(index,input.value));
+      const create=document.createElement("button");create.type="button";create.className="mini";
+      create.textContent="Create";create.title="Create a new directory under the selected parent";
+      const add=document.createElement("button");add.type="button";add.className="mini";
+      add.textContent="+ Child";add.title="Add a location level";
+      const remove=document.createElement("button");remove.type="button";remove.className="mini danger location-level-remove";
+      remove.textContent="×";remove.title="Clear this location and its dependent selections; no Cloudflare files are deleted";
+      remove.setAttribute("aria-label","Clear location level "+(index+1));
+      row.append(selected,input,create,add,remove);host.append(row);
+      const parent=parts.slice(0,index);
+      const parentReady=index===0||parent.every(Boolean);
+      const bucket=bucketName();
+      option(selected,"",parentReady?"Loading folders…":"Choose a parent first…");
+      selected.disabled=true;create.disabled=!parentReady;add.disabled=!parts[index];
+      const invalidateBelow=()=>{for(let k=index+1;k<parts.length;k++)parts[k]="";commit();};
+      selected.addEventListener("change",()=>{
+        parts[index]=selected.value;
+        invalidateBelow();
+        add.disabled=!parts[index];
+        message.textContent=parts[index]?"Selected /"+prefix():"Choose a location to continue.";
+        draw(index+1);
+      });
+      remove.addEventListener("click",()=>{
+        parts[index]="";invalidateBelow();draw(index);
+        message.textContent="Location cleared. Lower rows are ready for new selections; nothing was deleted from R2.";
+      });
+      add.addEventListener("click",()=>{
+        if(!parts[index]){message.textContent="Choose or create this location first.";return;}
+        parts.splice(index+1,0,"");draw(index+1);
+      });
+      create.addEventListener("click",async()=>{
+        const name=input.value.trim();
+        if(!name||name==="."||name===".."||/[\\/\\\\\\0-\\x1f]/.test(name)){
+          message.textContent="Enter one valid folder name, without slashes.";return;
+        }
+        if(!parentReady){message.textContent="Choose a parent first.";return;}
+        create.disabled=true;message.textContent="Creating directory…";
+        try{
+          const response=await send({type:"cfCreateFolder",accountId:profile.accountId,bucketName:bucket,accountName:profile.accountName,prefix:parent.join("/"),name});
+          if(!response?.ok)throw new Error(response?.error||"Folder creation failed.");
+          if(token!==generation||bucket!==bucketName()||parent.join("/")!==parts.slice(0,index).join("/")||!row.isConnected)return;
+          if(!Array.from(selected.options).some(o=>o.value===name))option(selected,name,name);
+          selected.value=name;selected.disabled=false;
+          parts[index]=name;drafts.delete(index);input.value="";
+          invalidateBelow();add.disabled=false;message.textContent="Directory created: /"+prefix();
+          draw(index+1);
+        }catch(error){message.textContent=error?.message||"Could not create directory.";}
+        finally{if(row.isConnected)create.disabled=false;}
+      });
+      if(!parentReady){option(selected,"","Select an ancestor first");continue;}
+      try{
+        const response=await send({type:"cfFolderChildren",accountId:profile.accountId,bucketName:bucket,parentPrefix:parent.join("/"),limit:100000});
+        if(token!==generation||!row.isConnected||bucket!==bucketName())return;
+        if(!response?.ok)throw new Error(response?.error||"Could not load folders.");
+        selected.replaceChildren();option(selected,"",index===0?"/ (bucket root)":"Choose existing child…");
+        for(const name of response.children||[])option(selected,name,name);
+        const saved=parts[index];
+        if(saved&&!(response.children||[]).includes(saved)){
+          parts[index]="";invalidateBelow();
+          message.textContent="Previously selected directory is not available under this parent.";
+        }
+        selected.value=parts[index]||"";selected.disabled=false;add.disabled=!parts[index];
+      }catch(error){
+        if(token!==generation||!row.isConnected)return;
+        selected.replaceChildren();option(selected,"","Folder lookup failed");
+        message.textContent=error?.message||"Folder lookup failed.";
+      }
+    }
+  };
+  const reset=(newPrefix="")=>{parts=String(newPrefix||"").split("/").filter(Boolean);if(!parts.length)parts=[""];drafts.clear();draw();};
+  draw();return {reset};
+}
 function simplePrimaryLocationField(profile){
   const wrap=document.createElement("div");wrap.className="default-location-builder";
   const label=document.createElement("label");label.textContent="Bucket and location";
@@ -480,126 +573,61 @@ function simplePrimaryLocationField(profile){
   const children=document.createElement("div");children.className="location-levels";
   const status=document.createElement("div");status.className="meta";
   fields.append(bucket,children);wrap.append(label,fields,status);
-  let version=0;
-  const option=(select,value,text)=>{const o=document.createElement("option");o.value=value;o.textContent=text;select.append(o);};
-  async function paint(){
-    const token=++version;
-    children.replaceChildren();
-    const parts=String(profile.defaultPrefix||"").split("/").filter(Boolean);
-    const currentBucket=profile.simpleBucketName||profile.bucketName;
-    async function appendLevel(index,parent){
-      if(token!==version||!wrap.isConnected)return;
-      const sel=document.createElement("select");sel.disabled=true;option(sel,"","Loading folders…");children.append(sel);
-      const res=await send({type:"cfFolderChildren",accountId:profile.accountId,bucketName:currentBucket,parentPrefix:parent.join("/"),limit:100000}).catch(e=>({ok:false,error:e.message}));
-      if(token!==version||!wrap.isConnected)return;
-      sel.replaceChildren();
-      if(!res?.ok){option(sel,"","Folder lookup unavailable");status.textContent=res?.error||"Could not load folders.";return;}
-      option(sel,"",index===0?"/ (bucket root)":"Choose child folder…");
-      for(const name of res.children||[])option(sel,name,name);
-      sel.value=parts[index]||"";
-      if(parts[index]&&!Array.from(sel.options).some(o=>o.value===parts[index])){sel.value="";profile.defaultPrefix=parent.join("/");scheduleSave();status.textContent="Previous folder not found in selected bucket.";}
-      sel.disabled=false;
-      sel.addEventListener("change",()=>{
-        profile.defaultPrefix=[...parent,...(sel.value?[sel.value]:[])].join("/");
-        scheduleSave();paint();
-      });
-      if(sel.value)await appendLevel(index+1,[...parent,sel.value]);
-    }
-    await appendLevel(0,[]);
-  }
-  bucket.addEventListener("change",()=>{profile.simpleBucketName=bucket.value;profile.defaultPrefix="";scheduleSave();paint();});
+  const name=()=>profile.simpleBucketName||profile.bucketName;
+  const editor=simpleFolderPathEditor(profile,children,status,name,profile.defaultPrefix,prefix=>{
+    profile.defaultPrefix=prefix;scheduleSave();
+  });
+  bucket.addEventListener("change",()=>{profile.simpleBucketName=bucket.value;profile.defaultPrefix="";scheduleSave();editor.reset();});
   (async()=>{
-    bucket.disabled=true;option(bucket,"","Loading buckets…");
+    bucket.disabled=true;const o=document.createElement("option");o.textContent="Loading buckets…";bucket.append(o);
     const res=await send({type:"cfBuckets",accountId:profile.accountId}).catch(e=>({ok:false,error:e.message}));
     if(!wrap.isConnected)return;
     bucket.replaceChildren();
-    if(!res?.ok){option(bucket,"",res?.error||"Bucket lookup failed");return;}
-    for(const name of (res.buckets||[]).map(b=>b.name))option(bucket,name,name);
-    bucket.value=profile.simpleBucketName||profile.bucketName;
-    bucket.disabled=false;
-    await paint();
-  })();
-  return wrap;
+    if(!res?.ok){const fail=document.createElement("option");fail.textContent=res?.error||"Bucket lookup failed";bucket.append(fail);return;}
+    for(const entry of res.buckets||[]){const opt=document.createElement("option");opt.value=entry.name;opt.textContent=entry.name;bucket.append(opt);}
+    bucket.value=name();bucket.disabled=false;
+  })();return wrap;
 }
 function simpleExtraOptions(profile){
-  const wrap=document.createElement("div");
-  wrap.className="card";
+  const wrap=document.createElement("div");wrap.className="card";
   const heading=document.createElement("div");heading.className="section-head";
-  const intro=document.createElement("div");
-  const title=document.createElement("strong");title.textContent="Additional Simple destinations";
-  const note=document.createElement("div");note.className="meta";note.textContent="The menu label is independent of the bucket. Each folder dropdown loads children of its selected parent.";
-  intro.append(title,note);
-  const add=document.createElement("button");add.type="button";add.className="ghost";add.textContent="+ Add New Option";
-  heading.append(intro,add);
-  const rows=document.createElement("div");
-  const options=profile.simpleOptions ||= [];
+  const intro=document.createElement("div");const title=document.createElement("strong");title.textContent="Additional Simple destinations";
+  const note=document.createElement("div");note.className="meta";note.textContent="Choose existing folders or explicitly create new directories at any level. × only clears the menu location.";
+  intro.append(title,note);const add=document.createElement("button");add.type="button";add.className="ghost";add.textContent="+ Add New Option";
+  heading.append(intro,add);const rows=document.createElement("div");const options=profile.simpleOptions||=[];
+  profile.simpleOptions=options;
   function addRow(item){
-    item.bucketName ||=profile.bucketName;
+    item.bucketName||=profile.bucketName;
     const row=document.createElement("div");row.className="card";
     const first=document.createElement("div");first.className="grid two";
     first.append(field("Menu label (shown on right-click)",item.label||"",v=>{item.label=v;},"text","My Artwork"));
-    const remove=document.createElement("button");remove.type="button";remove.className="ghost";
-    remove.textContent="Remove option";
-    remove.addEventListener("click",()=>{const index=options.indexOf(item);if(index>=0)options.splice(index,1);row.remove();saveProfiles();});
+    const remove=document.createElement("button");remove.type="button";remove.className="ghost";remove.textContent="Remove option";
+    remove.addEventListener("click",()=>{const i=options.indexOf(item);if(i>=0)options.splice(i,1);row.remove();saveProfiles();});
     first.append(remove);row.append(first);
     const second=document.createElement("div");second.className="grid two";
-    const bucketWrap=document.createElement("div");const bucketLabel=document.createElement("label");bucketLabel.textContent="Bucket";
-    const bucket=document.createElement("select");
-    bucketWrap.append(bucketLabel,bucket);
+    const bucketWrap=document.createElement("div"),bucketLabel=document.createElement("label");bucketLabel.textContent="Bucket";
+    const bucket=document.createElement("select");bucketWrap.append(bucketLabel,bucket);
     const folders=document.createElement("div");folders.className="location-levels";
     second.append(bucketWrap,folders);row.append(second);
     const message=document.createElement("div");message.className="meta";row.append(message);
-    let revision=0;
-    function option(select,value,text){const el=document.createElement("option");el.value=value;el.textContent=text;select.append(el);}
-    async function showFolders(){
-      const version=++revision;
-      folders.replaceChildren();
-      const path=String(item.prefix||"").split("/").filter(Boolean);
-      async function level(index,parent){
-        if(version!==revision||!row.isConnected)return;
-        const sel=document.createElement("select");sel.disabled=true;
-        option(sel,"","Loading folders…");folders.append(sel);
-        const response=await send({type:"cfFolderChildren",accountId:profile.accountId,bucketName:item.bucketName,parentPrefix:parent.join("/"),limit:100000}).catch(error=>({ok:false,error:error.message}));
-        if(version!==revision||!row.isConnected)return;
-        sel.replaceChildren();
-        if(!response?.ok){option(sel,"","Could not load folders — choose another bucket or retry");sel.disabled=false;message.textContent=response?.error||"Folder lookup failed.";return;}
-        option(sel,"",index===0?"/ (bucket root)":"Choose existing child…");
-        for(const name of response.children||[])option(sel,name,name);
-        sel.value=path[index]||"";
-        // Never pretend an absent cached child is a verified location.
-        if(path[index]&&!Array.from(sel.options).some(o=>o.value===path[index])){
-          sel.value="";item.prefix=parent.join("/");saveProfiles();
-          message.textContent="A previously selected folder was not found here.";
-        }
-        sel.disabled=false;
-        sel.addEventListener("change",()=>{
-          const selected=sel.value;
-          item.prefix=[...parent,...(selected?[selected]:[])].join("/");
-          saveProfiles();showFolders();
-        });
-        if(sel.value)await level(index+1,[...parent,sel.value]);
-      }
-      await level(0,[]);
-    }
-    bucket.addEventListener("change",()=>{item.bucketName=bucket.value;item.prefix="";saveProfiles();showFolders();});
-    async function loadBuckets(){
-      bucket.disabled=true;option(bucket,"","Loading buckets…");
-      const result=await send({type:"cfBuckets",accountId:profile.accountId}).catch(error=>({ok:false,error:error.message}));
+    const editor=simpleFolderPathEditor(profile,folders,message,()=>item.bucketName,item.prefix,prefix=>{item.prefix=prefix;saveProfiles();});
+    bucket.addEventListener("change",()=>{item.bucketName=bucket.value;item.prefix="";saveProfiles();editor.reset();});
+    (async()=>{
+      bucket.disabled=true;const wait=document.createElement("option");wait.textContent="Loading buckets…";bucket.append(wait);
+      const result=await send({type:"cfBuckets",accountId:profile.accountId}).catch(e=>({ok:false,error:e.message}));
       if(!row.isConnected)return;
       bucket.replaceChildren();
-      if(!result?.ok){option(bucket,"",result?.error||"Unable to load buckets");message.textContent="Cloudflare bucket lookup failed.";return;}
-      for(const name of (result.buckets||[]).map(b=>b.name))option(bucket,name,name);
+      if(!result?.ok){const opt=document.createElement("option");opt.textContent=result?.error||"Unable to load buckets";bucket.append(opt);return;}
+      for(const entry of result.buckets||[]){const opt=document.createElement("option");opt.value=entry.name;opt.textContent=entry.name;bucket.append(opt);}
       if(!Array.from(bucket.options).some(o=>o.value===item.bucketName))item.bucketName=profile.bucketName;
       bucket.value=item.bucketName;bucket.disabled=false;
-      await showFolders();
-    }
-    rows.append(row);loadBuckets();
+    })();
+    rows.append(row);
   }
   for(const item of options)addRow(item);
   add.addEventListener("click",()=>{
     const item={id:uid(),label:"New destination",bucketName:profile.bucketName,prefix:""};
-    options.push(item);addRow(item);saveProfiles();
-    rows.lastElementChild?.querySelector("input")?.focus();
+    options.push(item);addRow(item);saveProfiles();rows.lastElementChild?.querySelector("input")?.focus();
   });
   wrap.append(heading,rows);return wrap;
 }
