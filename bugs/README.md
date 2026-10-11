@@ -394,6 +394,18 @@ In **Upload from computer**, after choosing the Cloudflare R2 bucket `works`, th
 
 **History:** [DBG-003](../docs/debug/DBG-003_UPLOAD_LOCATION_BINDING.md).
 
+## Source fix — Flat Simple right-click destinations (human testing pending)
+
+**Status:** Implementation committed `c172731` with focused test `0f88e43`; automated and installed-Chrome verification pending.
+
+The supplied screenshot showed **REDOWN → preset → Default location / named option** even though Simple Mode is intended as one destination popup. The source used a `simple:<profile>` grouping menu whenever a preset had extra destinations. The updated menu registers the default destination and all additional Simple options directly under `REDOWN`; directory depth does not create submenu depth. Existing `quick:` and `simple-option:` IDs are preserved for click routing.
+
+**Name fallback:** A nonempty explicit label wins. Otherwise show the lowest/deepest selected directory name; when targeting the bucket root, show the bucket name. The depth of the destination does not affect its placement in the menu.
+
+**Ordering distinction:** A preset's existing `Order` field still sorts presets. Extra Simple options retain their saved array order **within** that preset and currently have **no independent Order field**. A future drag/reorder control for individual options is a separate enhancement, not part of this flat-menu fix.
+
+**Human acceptance:** Reload the unpacked extension and right-click an image; verify the one-level REDOWN destination list, custom and default labels, correct remote destination on click, and existing menu order. Do not claim Chrome verification from a source-only patch.
+
 ## BUG-014 — Upload from Computer: choosing an existing location fills the new-name input
 
 **Status:** Open · user-reported regression (October 10, 2026); runtime mechanism not yet verified
