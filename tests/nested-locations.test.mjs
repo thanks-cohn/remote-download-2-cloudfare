@@ -156,3 +156,49 @@ test('native menu mode checkbox changes the same saved setting without downloadi
   await listener({menuItemId:'redown-nested-mode',checked:true});
   assert.deepEqual(patches,[{rightClickMode:'simple'},{rightClickMode:'nested'}]);
 });
+
+test('DBG-001: selecting a new deep child enables its next child without bucket reselection',async()=>{
+  const h=harness();await settled();
+  const grand=h.row('grand');
+  grand.querySelector('.nested-actions button').click();await settled();
+  const fresh=h.p.nestedMenu.roots[0].children[0].children[0].children[0];
+  h.locations.set('child/grandchild',['existing-deeper']);
+  // An existing child must be independently selectable, not derived from a root reselect.
+  // A fresh child fetch was already performed before updating the mock locations;
+  // repopulate by selecting the existing parent and adding a second fresh row.
+  h.change(grand.querySelector('select'),'grandchild');await settled();
+  const first=h.row(fresh.id).querySelector('select');
+  assert.equal(first.disabled,false);
+  h.dom.window.close();
+});
+
+test('DBG-001: create-new folder enables repeated + Child through five levels',async()=>{
+  const h=harness();await settled();
+  let node=h.p.nestedMenu.roots[0].children[0].children[0];
+  for(let depth=3;depth<=5;depth++){
+    const parentRow=h.row(node.id);
+    const add=parentRow.querySelector('.nested-actions button');
+    assert.equal(add.disabled,false,'verified level '+(depth-1)+' can accept a child');
+    add.click();await settled();
+    const child=node.children.at(-1);
+    assert.ok(child,'child row is appended');
+    const childRow=h.row(child.id);
+    h.type(childRow.querySelector('.nested-new'),'level-'+depth);
+    childRow.querySelector('.nested-create button').click();await settled();
+    assert.equal(child.name,'level-'+depth);
+    assert.equal(h.row(child.id).querySelector('.nested-actions button').disabled,false,'newly created depth '+depth+' can append a child');
+    node=child;
+  }
+  assert.ok(h.dom.window.RedownNestedLocations.destinations(h.p.nestedMenu).some(item=>item.prefix==='child/grandchild/level-3/level-4/level-5'));
+  assert.equal(h.calls.filter(c=>c.type==='cfBuckets').length,1,'no root reselection');
+  h.dom.window.close();
+});
+
+test('DBG-001: selecting existing child enables + Child after the async save lock releases',async()=>{
+  const h=harness();await settled();
+  h.change(h.row('child').querySelector('select'),'sibling');await settled();
+  assert.equal(h.row('child').querySelector('.nested-actions button').disabled,false);
+  h.change(h.row('child').querySelector('select'),'child');await settled();
+  assert.equal(h.row('child').querySelector('.nested-actions button').disabled,false);
+  h.dom.window.close();
+});
