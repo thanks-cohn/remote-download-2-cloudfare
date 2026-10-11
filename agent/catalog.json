@@ -1,0 +1,593 @@
+{
+  "apiVersion": "0.1",
+  "catalogVersion": "0.1",
+  "discoveryLimits": [
+    "Six representative operations; remaining messages inventoried in docs/agent/MESSAGE_INVENTORY.md",
+    "Source hashes and literal symbol anchors detect reference drift, not semantic correctness or executed test outcomes",
+    "Browser/OAuth/cloud deployment and Windows execution not verified",
+    "No accepted Forever Works model; links remain unknown"
+  ],
+  "operations": [
+    {
+      "coverage": "unknown: Nested fixture mocks creation; no live bucket or createBucket handler test.",
+      "errors": [
+        "Invalid name, missing/expired OAuth, Cloudflare provider error",
+        "Bucket creation success is not Worker readiness"
+      ],
+      "evidenceStatus": "verified-in-source",
+      "foreverLinks": {
+        "links": [],
+        "reason": "No accepted ReDown Forever Works model or stable entity mapping is present.",
+        "status": "unknown",
+        "supportedModelVersions": []
+      },
+      "id": "cfCreateBucket",
+      "input": "{type:cfCreateBucket, accountId, name, locationHint?}; name normalized to lowercase.",
+      "output": "{ok:true,bucket:providerResult}; invalid names fail before POST.",
+      "path": [
+        "Create click",
+        "cfCreateBucket",
+        "createBucket",
+        "cfJson → cfFetch → RedownCloudflareApi.request",
+        "POST /accounts/{accountId}/r2/buckets",
+        "Caller may separately invoke cfProvision or save nested root"
+      ],
+      "security": [
+        "3–63 lowercase alphanumeric/hyphen validation",
+        "Cloudflare OAuth permissions"
+      ],
+      "sideEffects": [
+        "Creates remote bucket; no rollback if later profile save/provision fails"
+      ],
+      "sourceRefs": [
+        {
+          "path": "extension/background.js",
+          "sha256": "6ce053548a011d61bf714c0b889562d34a79782bc9aa4953c9f68dcf30769c66",
+          "symbol": "async function createBucket"
+        },
+        {
+          "path": "extension/options.js",
+          "sha256": "4bf2363e723afa725ea3ed40d0c4a2f2c93e23dcce5c8d7cfae943fd87414b29",
+          "symbol": "function simpleBucketCreator"
+        },
+        {
+          "path": "extension/options.js",
+          "sha256": "4bf2363e723afa725ea3ed40d0c4a2f2c93e23dcce5c8d7cfae943fd87414b29",
+          "symbol": "$(\"create-bucket\").addEventListener"
+        },
+        {
+          "path": "extension/nested-menu-editor.js",
+          "sha256": "e23f1c8572d1682812cf06c21c82873d52aa1f7e196dbf59ab83cfbcf6534635",
+          "symbol": "function rootRow"
+        }
+      ],
+      "state": [
+        "createBucket itself does not save profiles; caller may save/provision later"
+      ],
+      "summary": "Create a new Cloudflare R2 bucket; preparation is a separate operation.",
+      "testRefs": [],
+      "uiOrigin": "Cloudflare #create-bucket; Simple bucket creator; Nested rootRow Create."
+    },
+    {
+      "coverage": "partial: embedded Worker marker operation tested; UI fixture mocks cfCreateFolder; full deployed operation untested.",
+      "errors": [
+        "Invalid name/path, missing account/bucket, failed deployment/auth/put",
+        "Remote marker write and local UI save are separate awaits"
+      ],
+      "evidenceStatus": "verified-in-source",
+      "foreverLinks": {
+        "links": [],
+        "reason": "No accepted ReDown Forever Works model or stable entity mapping is present.",
+        "status": "unknown",
+        "supportedModelVersions": []
+      },
+      "id": "cfCreateFolder",
+      "input": "{type:cfCreateFolder, accountId, bucketName, accountName?, prefix, name}.",
+      "output": "{ok:true,key:prefix/name/} after Worker response; no independent read-back.",
+      "path": [
+        "UI sends cfCreateFolder",
+        "runtime.onMessage",
+        "createExplorerFolder",
+        "cleanExplorerPrefix + cleanExplorerName",
+        "preparedProfile",
+        "callBucketWorker action ensurePrefixes",
+        "WORKER_SOURCE.fetch → STORAGE.head/put marker"
+      ],
+      "security": [
+        "Reject invalid parent/name",
+        "OAuth for preparation; Bearer for Worker; callBucketWorker repairs once on 401/403"
+      ],
+      "sideEffects": [
+        "May deploy/repair Worker and create configured markers",
+        "Writes marker only; does not move existing files"
+      ],
+      "sourceRefs": [
+        {
+          "path": "extension/background.js",
+          "sha256": "6ce053548a011d61bf714c0b889562d34a79782bc9aa4953c9f68dcf30769c66",
+          "symbol": "async function createExplorerFolder"
+        },
+        {
+          "path": "extension/background.js",
+          "sha256": "6ce053548a011d61bf714c0b889562d34a79782bc9aa4953c9f68dcf30769c66",
+          "symbol": "async function callBucketWorker"
+        },
+        {
+          "path": "extension/background.js",
+          "sha256": "6ce053548a011d61bf714c0b889562d34a79782bc9aa4953c9f68dcf30769c66",
+          "symbol": "body.action === \"ensurePrefixes\""
+        },
+        {
+          "path": "extension/options.js",
+          "sha256": "4bf2363e723afa725ea3ed40d0c4a2f2c93e23dcce5c8d7cfae943fd87414b29",
+          "symbol": "function beginNewFolder"
+        },
+        {
+          "path": "extension/nested-menu-editor.js",
+          "sha256": "e23f1c8572d1682812cf06c21c82873d52aa1f7e196dbf59ab83cfbcf6534635",
+          "symbol": "function folderRow"
+        }
+      ],
+      "state": [
+        "May persist profile and session Worker secret"
+      ],
+      "summary": "Create a zero-byte folder marker at the exact selected parent prefix.",
+      "testRefs": [
+        {
+          "path": "tests/explorer-worker.test.mjs",
+          "sha256": "6535ac98ef02b5053731e06ceaf32658bb8e5b33812624609d69bf67dca9351d",
+          "symbol": "folder markers, properties, and batched deletes are real R2 operations"
+        }
+      ],
+      "uiOrigin": "Nested Create; Explorer New folder; Upload location builder uses cfEnsurePrefixes via materializeUploadBuilderPrefix instead."
+    },
+    {
+      "coverage": "unknown: editor tests mock this message; real listFolderChildren pagination/marker logic is not exercised by those fixtures.",
+      "errors": [
+        "Connect/session expired, provider listing error",
+        "Limit caps children without reporting incomplete",
+        "Upload fetch failures become empty arrays in fetchUploadBuilderChildren"
+      ],
+      "evidenceStatus": "verified-in-source",
+      "foreverLinks": {
+        "links": [],
+        "reason": "No accepted ReDown Forever Works model or stable entity mapping is present.",
+        "status": "unknown",
+        "supportedModelVersions": []
+      },
+      "id": "cfFolderChildren",
+      "input": "{type:cfFolderChildren, accountId, bucketName, parentPrefix?, limit?}; defaults empty parent and 250.",
+      "output": "{ok:true, children:string[]} sorted with localeCompare; errors use {ok:false,error:string}. No completeness flag.",
+      "path": [
+        "UI sends cfFolderChildren",
+        "runtime.onMessage",
+        "listFolderChildren",
+        "cleanExplorerPrefix",
+        "listObjectsPage with delimiter / and cursor",
+        "RedownCloudflareApi.request → Cloudflare objects API"
+      ],
+      "security": [
+        "OAuth access/refresh through shared API adapter",
+        "Reject dot segments, backslash and NUL in parent prefix"
+      ],
+      "sideEffects": [
+        "Listing; OAuth refresh may update cloudflareAuth",
+        "Optional RFIS writes; no Worker preparation needed"
+      ],
+      "sourceRefs": [
+        {
+          "path": "extension/background.js",
+          "sha256": "6ce053548a011d61bf714c0b889562d34a79782bc9aa4953c9f68dcf30769c66",
+          "symbol": "async function listFolderChildren"
+        },
+        {
+          "path": "extension/background.js",
+          "sha256": "6ce053548a011d61bf714c0b889562d34a79782bc9aa4953c9f68dcf30769c66",
+          "symbol": "async function listObjectsPage"
+        },
+        {
+          "path": "extension/options.js",
+          "sha256": "4bf2363e723afa725ea3ed40d0c4a2f2c93e23dcce5c8d7cfae943fd87414b29",
+          "symbol": "async function fetchUploadBuilderChildren"
+        },
+        {
+          "path": "extension/nested-menu-editor.js",
+          "sha256": "e23f1c8572d1682812cf06c21c82873d52aa1f7e196dbf59ab83cfbcf6534635",
+          "symbol": "function folderRow"
+        }
+      ],
+      "state": [
+        "Optional rfisPreviewEnabled observation writes IndexedDB files/events",
+        "UI caches are local observations, not remote truth"
+      ],
+      "summary": "List immediate existing folder children under one account, bucket and parent prefix.",
+      "testRefs": [
+        {
+          "path": "tests/nested-locations.test.mjs",
+          "sha256": "0dc1ba13e361e7f175c5649d043840d27b200cc77ac0739780dfaaba7884ab37",
+          "symbol": "Add child and Create use the exact parent path; actual dropdown children stay scoped"
+        }
+      ],
+      "uiOrigin": "Simple selectors, Nested folderRow/populate, Upload from Computer child selectors."
+    },
+    {
+      "coverage": "partial: nested menu routing fixture tests exist; full event → network ingest/R2 write and interruption tests absent.",
+      "errors": [
+        "Missing destination or unprepared selected Simple bucket",
+        "Invalid source/path, remote HTTP failure, size limit, authorization, provisioning or R2 failure",
+        "Nested parent uses Send here due to native menu constraints"
+      ],
+      "evidenceStatus": "verified-in-source",
+      "foreverLinks": {
+        "links": [],
+        "reason": "No accepted ReDown Forever Works model or stable entity mapping is present.",
+        "status": "unknown",
+        "supportedModelVersions": []
+      },
+      "id": "context-menu-transfer",
+      "input": "Chrome context-menu event: menuItemId, srcUrl/linkUrl/pageUrl; persisted profile and selected prefix.",
+      "output": "Notification and a capped local transferHistory entry; R2 Worker returns key/publicUrl, while GitHub dispatch is only an acknowledgement.",
+      "path": [
+        "chrome.contextMenus.onClicked",
+        "selectedUrl",
+        "RedownNestedLocations.destinations or Simple profile lookup",
+        "ingestCloudflareAtPrefix",
+        "preparedProfile (may deploy/repair)",
+        "WORKER_SOURCE.fetch → checkedFetch → STORAGE.put",
+        "recordTransfer → notify"
+      ],
+      "security": [
+        "Bearer secret on deployed Worker",
+        "HTTPS, obvious private-host blocking and redirect revalidation in checkedFetch",
+        "cleanExplorerPrefix/cleanName; source validation is not full DNS-rebinding protection"
+      ],
+      "sideEffects": [
+        "May deploy Worker, enable subdomain and create prefix markers before transfer",
+        "R2 object write; same key can overwrite",
+        "GitHub branch may install workflow and dispatch Actions; dispatch does not verify final commit"
+      ],
+      "sourceRefs": [
+        {
+          "path": "extension/background.js",
+          "sha256": "6ce053548a011d61bf714c0b889562d34a79782bc9aa4953c9f68dcf30769c66",
+          "symbol": "chrome.contextMenus.onClicked.addListener"
+        },
+        {
+          "path": "extension/background.js",
+          "sha256": "6ce053548a011d61bf714c0b889562d34a79782bc9aa4953c9f68dcf30769c66",
+          "symbol": "async function ingestCloudflareAtPrefix"
+        },
+        {
+          "path": "extension/background.js",
+          "sha256": "6ce053548a011d61bf714c0b889562d34a79782bc9aa4953c9f68dcf30769c66",
+          "symbol": "async function checkedFetch"
+        },
+        {
+          "path": "extension/background.js",
+          "sha256": "6ce053548a011d61bf714c0b889562d34a79782bc9aa4953c9f68dcf30769c66",
+          "symbol": "const WORKER_SOURCE"
+        },
+        {
+          "path": "extension/nested-locations.js",
+          "sha256": "663a0cb8b08f7cddcf7274ccc1c424becb6e9c2ea0e8949b25c3183d9f005f73",
+          "symbol": "function destinations"
+        }
+      ],
+      "state": [
+        "profiles/rightClickMode in chrome.storage.local",
+        "Worker secret in profile plus session provisioning cache",
+        "transferHistory capped at 50; no crash-safe journal"
+      ],
+      "summary": "Send a selected HTTPS source to the saved Simple or Nested destination.",
+      "testRefs": [
+        {
+          "path": "tests/nested-locations.test.mjs",
+          "sha256": "0dc1ba13e361e7f175c5649d043840d27b200cc77ac0739780dfaaba7884ab37",
+          "symbol": "native nested menu targets every verified depth and offers Send here for parents"
+        }
+      ],
+      "uiOrigin": "Native REDOWN context menu built by buildMenus/addNestedLocations."
+    },
+    {
+      "coverage": "partial: direct API preview/download tested; navigation/listing retry UI lacks end-to-end coverage.",
+      "errors": [
+        "Stale async target/result risk requires browser reproduction",
+        "401/403 propagation may wait 20 seconds between attempts",
+        "R2 listing is not proof of durable file identity or complete inventory"
+      ],
+      "evidenceStatus": "verified-in-source",
+      "foreverLinks": {
+        "links": [],
+        "reason": "No accepted ReDown Forever Works model or stable entity mapping is present.",
+        "status": "unknown",
+        "supportedModelVersions": []
+      },
+      "id": "explorer-navigation",
+      "input": "Selected workspaceTarget account/bucket, workspacePrefix and append/cursor.",
+      "output": "Rendered rows and cursor/pagination; provider failure shown as preparing or error, not successful listing.",
+      "path": [
+        "goLocation/openExplorerItem",
+        "browseWorkspace",
+        "cfObjects",
+        "listObjects → listObjectsPage → Cloudflare objects API",
+        "buildDirectoryItems → renderFileItems",
+        "On transient error: ensurePrepared and retry up to seven attempts"
+      ],
+      "security": [
+        "OAuth listing; browser preparation may deploy/repair Worker",
+        "Preview/download now use RedownCloudflareApi directly, not cfPrivateObjectUrl/cfDownloadObject handlers"
+      ],
+      "sideEffects": [
+        "Listing can refresh OAuth and optionally write IndexedDB",
+        "Transient recovery path can mutate Worker configuration through ensurePrepared"
+      ],
+      "sourceRefs": [
+        {
+          "path": "extension/options.js",
+          "sha256": "4bf2363e723afa725ea3ed40d0c4a2f2c93e23dcce5c8d7cfae943fd87414b29",
+          "symbol": "async function goLocation"
+        },
+        {
+          "path": "extension/options.js",
+          "sha256": "4bf2363e723afa725ea3ed40d0c4a2f2c93e23dcce5c8d7cfae943fd87414b29",
+          "symbol": "async function browseWorkspace"
+        },
+        {
+          "path": "extension/background.js",
+          "sha256": "6ce053548a011d61bf714c0b889562d34a79782bc9aa4953c9f68dcf30769c66",
+          "symbol": "async function listObjectsPage"
+        },
+        {
+          "path": "extension/cloudflare-api.js",
+          "sha256": "b7fc9cd9dda5848370a814584a1134c33656b7d7967f2d8deb5a8d58288c3e1d",
+          "symbol": "async function preview"
+        }
+      ],
+      "state": [
+        "UI target/prefix/raw objects/cursor/selection; navigation history",
+        "Optional RFIS observations only when preview flag enabled"
+      ],
+      "summary": "Browse one R2 location, assemble directory rows, and page through remote objects.",
+      "testRefs": [
+        {
+          "path": "tests/cloudflare-files.test.mjs",
+          "sha256": "6a9828ca5f8981c1c5140abd619b57c0c5b6b88b5a6b9a1080bb5a7d1ed05edd",
+          "symbol": "private WEBP preview reads nested keys without a Worker or background messaging"
+        }
+      ],
+      "uiOrigin": "Source tree, folder double-click, breadcrumb/back/forward/up/refresh and pagination."
+    },
+    {
+      "coverage": "unknown: no uploadLocalFiles or upload-local body integration test in current suite.",
+      "errors": [
+        "No bucket/profile, failed auth/provision, upload/JSON error",
+        "History recording and remote write are separate operations; no resumable batch or durable job"
+      ],
+      "evidenceStatus": "verified-in-source",
+      "foreverLinks": {
+        "links": [],
+        "reason": "No accepted ReDown Forever Works model or stable entity mapping is present.",
+        "status": "unknown",
+        "supportedModelVersions": []
+      },
+      "id": "upload-from-computer",
+      "input": "FileList/drop event; selected account/bucket from local-profile and hidden local-prefix.",
+      "output": "Per-file status and recordLocalTransfer; stops at first failure and refreshes history.",
+      "path": [
+        "uploadLocalFiles",
+        "ensureUploadProfile → ensurePrepared if missing",
+        "fetch(profile.workerUrl) with x-redown-action:upload-local and body:File",
+        "WORKER_SOURCE upload-local → STORAGE.put",
+        "recordLocalTransfer → recordTransfer",
+        "renderHistory and optional browseWorkspace"
+      ],
+      "security": [
+        "Bearer Worker secret",
+        "Worker cleanName/cleanPrefix and MAX_BYTES",
+        "This intentionally sends local bytes; unlike remote source ingest"
+      ],
+      "sideEffects": [
+        "May provision Worker; writes object; same-key overwrite possible",
+        "Location materialization can create markers before file upload"
+      ],
+      "sourceRefs": [
+        {
+          "path": "extension/options.js",
+          "sha256": "4bf2363e723afa725ea3ed40d0c4a2f2c93e23dcce5c8d7cfae943fd87414b29",
+          "symbol": "async function uploadLocalFiles"
+        },
+        {
+          "path": "extension/options.js",
+          "sha256": "4bf2363e723afa725ea3ed40d0c4a2f2c93e23dcce5c8d7cfae943fd87414b29",
+          "symbol": "async function ensureUploadProfile"
+        },
+        {
+          "path": "extension/options.js",
+          "sha256": "4bf2363e723afa725ea3ed40d0c4a2f2c93e23dcce5c8d7cfae943fd87414b29",
+          "symbol": "async function loadUploadLocations"
+        },
+        {
+          "path": "extension/background.js",
+          "sha256": "6ce053548a011d61bf714c0b889562d34a79782bc9aa4953c9f68dcf30769c66",
+          "symbol": "request.headers.get(\"x-redown-action\") === \"upload-local\""
+        }
+      ],
+      "state": [
+        "Upload location segments/prefix cache in UI",
+        "profiles and transferHistory locally persisted"
+      ],
+      "summary": "Send selected local File bodies from the options page directly to the bucket Worker.",
+      "testRefs": [],
+      "uiOrigin": "#local-files/#local-dropzone and Explorer upload/drop controls."
+    }
+  ],
+  "overview": {
+    "boundaries": [
+      "Forever Works: accepted durable why (not yet integrated)",
+      "agent/: static current-how inspection; never execute transfers",
+      "Simple programmer API/native CLI: proposed; current extension messages are not that public API",
+      "Existing extension/Worker execution remains untouched"
+    ],
+    "commands": [
+      "npm ci --cache /workspace/.npm-cache --no-audit --no-fund",
+      "npm run check",
+      "npm test",
+      "node --test tests/agent-api.test.mjs",
+      "node agent/cli.mjs describe --json"
+    ],
+    "entryPoints": [
+      "extension/manifest.json → background.js, popup.html, options.html",
+      "WORKER_SOURCE embedded in extension/background.js: primary per-bucket runtime",
+      "worker/src/index.js: separate smaller ASSETS ingest sample",
+      "local/bridge.mjs: optional legacy bridge; not used by current popup",
+      "windows/CMakeLists.txt: native source windows/src/main.c absent"
+    ],
+    "evidenceStatus": "verified-in-source",
+    "sourceRefs": [
+      {
+        "path": "extension/manifest.json",
+        "sha256": "8641423d779dd6af942bfea0bad9d369b0755f7b23c4df7bb6d37cc3f64ae6ca",
+        "symbol": "\"service_worker\""
+      },
+      {
+        "path": "extension/background.js",
+        "sha256": "6ce053548a011d61bf714c0b889562d34a79782bc9aa4953c9f68dcf30769c66",
+        "symbol": "const WORKER_SOURCE"
+      },
+      {
+        "path": "extension/rfis-index.js",
+        "sha256": "9f5a18349521a398ea2f0e85b1a1978830fc8aa5caf06e93f1806502e14d8f1f",
+        "symbol": "async function observe"
+      },
+      {
+        "path": "worker/src/index.js",
+        "sha256": "b354b3dc77d6f1b4196f137c02dd040ca8f143579b4765595546d751929f17a4",
+        "symbol": "async fetch(request, env)"
+      }
+    ],
+    "status": [
+      {
+        "claim": "Context menus, OAuth, direct preview/download, upload UI and Explorer are present",
+        "evidenceStatus": "verified-in-source"
+      },
+      {
+        "claim": "RFIS opt-in IndexedDB observations/export exist; no move lineage or crash-safe transfer journal demonstrated",
+        "evidenceStatus": "verified-in-source"
+      },
+      {
+        "claim": "Unified public API, native CLI, paid tiers and durable recovery are proposals",
+        "evidenceStatus": "proposed"
+      },
+      {
+        "claim": "Installed Wrangler runtime supports 2026-05-03; repository requests 2026-09-26",
+        "evidenceStatus": "unknown",
+        "note": "Local startup blocked in baseline; do not silently change runtime semantics."
+      }
+    ],
+    "summary": "REDOWN 0.5.12 browser extension sends remote HTTPS files to R2 through per-bucket Workers or dispatches GitHub Actions; options also uploads local files and browses R2."
+  },
+  "provenance": {
+    "authority": "implementation observations; not accepted durable intent",
+    "reviewStatus": "unreviewed",
+    "sourceType": "agent-proposed"
+  },
+  "sourceCommit": "75ffcf5b775e48f893126083b51890c730c9c3b4",
+  "sourceRevisions": [
+    {
+      "path": "README.md",
+      "sha256": "73072831440eef2b7998bf1aa2453794c3ea38aa2524f2c3332f63ce2d811d04"
+    },
+    {
+      "path": "SETUP.md",
+      "sha256": "790cff76088ad6b72c65772e031b2b53f146c65f632eaa9299afe9654ba58715"
+    },
+    {
+      "path": "SPEC.md",
+      "sha256": "9b468e68eaa238ee5ed1e387c2cd375f6dbab936dfc775b473cd21a22210af54"
+    },
+    {
+      "path": "bugs/README.md",
+      "sha256": "b6dde90d6b4cc579a5ca7d01166a51ea0b06131e0eea4c9ad90281a88203684e"
+    },
+    {
+      "path": "docs/proposals/REDOWN_COMPETITIVE_LEADERSHIP_ROADMAP.md",
+      "sha256": "55a06d37a5d4b7f6cc09a5a7bd89028b4e6a88b44adc1eb309012c060d69d77c"
+    },
+    {
+      "path": "docs/proposals/RFIS_PERSISTENT_FILE_IDENTITY_HISTORY.md",
+      "sha256": "a3a57101ece4f416e4b04af6c6c8dffdabce45ed850b74d53e931ebea644b7f9"
+    },
+    {
+      "path": "docs/proposals/UNIFIED_THREE_INTERFACE_API.md",
+      "sha256": "af006010deddd9d3237a0f08fc86236b81f92285c532347f9a5cf129227b235e"
+    },
+    {
+      "path": "extension/background.js",
+      "sha256": "6ce053548a011d61bf714c0b889562d34a79782bc9aa4953c9f68dcf30769c66"
+    },
+    {
+      "path": "extension/cloudflare-api.js",
+      "sha256": "b7fc9cd9dda5848370a814584a1134c33656b7d7967f2d8deb5a8d58288c3e1d"
+    },
+    {
+      "path": "extension/cloudflare-auth.js",
+      "sha256": "5b6729a7d4b1c4d72a2da86026c07546481e1cb13dd51a5c30013f1d14dfacc2"
+    },
+    {
+      "path": "extension/manifest.json",
+      "sha256": "8641423d779dd6af942bfea0bad9d369b0755f7b23c4df7bb6d37cc3f64ae6ca"
+    },
+    {
+      "path": "extension/nested-locations.js",
+      "sha256": "663a0cb8b08f7cddcf7274ccc1c424becb6e9c2ea0e8949b25c3183d9f005f73"
+    },
+    {
+      "path": "extension/nested-menu-editor.js",
+      "sha256": "e23f1c8572d1682812cf06c21c82873d52aa1f7e196dbf59ab83cfbcf6534635"
+    },
+    {
+      "path": "extension/options.html",
+      "sha256": "72a35d1d55f6fa86faf364cd5a9f033e75fbe882fcee52fe9c011b0a85c68afd"
+    },
+    {
+      "path": "extension/options.js",
+      "sha256": "4bf2363e723afa725ea3ed40d0c4a2f2c93e23dcce5c8d7cfae943fd87414b29"
+    },
+    {
+      "path": "extension/popup.js",
+      "sha256": "1c85c959aa90f84ed9bc8be10c94f44707df5bef7507c4249a72ed20f4ff1c08"
+    },
+    {
+      "path": "extension/rfis-index.js",
+      "sha256": "9f5a18349521a398ea2f0e85b1a1978830fc8aa5caf06e93f1806502e14d8f1f"
+    },
+    {
+      "path": "local/bridge.mjs",
+      "sha256": "af8baa4b2c31cb3fcf4acf1fda0d2f8cbf9021a3b09b9e39d1cb24639648fd31"
+    },
+    {
+      "path": "package-lock.json",
+      "sha256": "069230a8f8bf1b86f2d4cc045c37c9bc8fecfdbb2a363599f874834c544f98ca"
+    },
+    {
+      "path": "package.json",
+      "sha256": "9fff5fc2a1e44173085b855c23dd1af82cd68c8db8d561e38bdf69433b0fb1a8"
+    },
+    {
+      "path": "windows/CMakeLists.txt",
+      "sha256": "87de8306cd775d933e0fc5b8031cac1a8d6ea603f2dd2b88e8a177002a3371e1"
+    },
+    {
+      "path": "windows/README.md",
+      "sha256": "50489ae2d472a315f0a68a334d0297bdafce8e62b6d635bd8d2d8ac17b112cb4"
+    },
+    {
+      "path": "worker/src/index.js",
+      "sha256": "b354b3dc77d6f1b4196f137c02dd040ca8f143579b4765595546d751929f17a4"
+    },
+    {
+      "path": "wrangler.toml",
+      "sha256": "0e40d6f4a7f8486439b9085f24b2f2b629bc5431101c2d9a292799ca2ae37764"
+    }
+  ]
+}

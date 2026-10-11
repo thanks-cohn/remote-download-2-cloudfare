@@ -1,0 +1,62 @@
+[
+  {
+    "errorCode": null,
+    "input": {},
+    "operation": "describe"
+  },
+  {
+    "errorCode": null,
+    "input": {},
+    "operation": "projectOverview"
+  },
+  {
+    "errorCode": null,
+    "input": {},
+    "operation": "listOperations"
+  },
+  {
+    "errorCode": null,
+    "input": {
+      "id": "cfFolderChildren"
+    },
+    "operation": "explainOperation"
+  },
+  {
+    "errorCode": null,
+    "input": {
+      "id": "cfCreateFolder"
+    },
+    "operation": "getForeverLinks"
+  },
+  {
+    "errorCode": "operation-not-found",
+    "input": {
+      "id": "missing"
+    },
+    "operation": "explainOperation"
+  },
+  {
+    "errorCode": "operation-not-found",
+    "input": {
+      "id": "CFFolderChildren"
+    },
+    "operation": "explainOperation"
+  },
+  {
+    "errorCode": "unsupported-version",
+    "input": {
+      "apiVersion": "9"
+    },
+    "operation": "describe"
+  },
+  {
+    "errorCode": "unsupported-operation",
+    "input": {},
+    "operation": "traceImpact"
+  },
+  {
+    "errorCode": "invalid-request",
+    "input": {},
+    "operation": "explainOperation"
+  }
+]

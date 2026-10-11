@@ -1,0 +1,192 @@
+{
+  "$defs": {
+    "sourceRef": {
+      "additionalProperties": true,
+      "properties": {
+        "path": {
+          "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "type": "string"
+        },
+        "symbol": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "symbol",
+        "sha256"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": true,
+  "allOf": [
+    {
+      "else": {
+        "properties": {
+          "data": {
+            "type": [
+              "object",
+              "array"
+            ]
+          }
+        }
+      },
+      "if": {
+        "required": [
+          "error"
+        ]
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "null"
+          },
+          "evidenceStatus": {
+            "const": "unknown"
+          }
+        }
+      }
+    }
+  ],
+  "properties": {
+    "apiVersion": {
+      "const": "0.1"
+    },
+    "data": {},
+    "error": {
+      "additionalProperties": true,
+      "properties": {
+        "code": {
+          "enum": [
+            "invalid-request",
+            "unsupported-version",
+            "unsupported-catalog-version",
+            "unsupported-operation",
+            "operation-not-found"
+          ]
+        },
+        "details": {
+          "type": "object"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "details"
+      ],
+      "type": "object"
+    },
+    "evidenceStatus": {
+      "enum": [
+        "verified-in-source",
+        "verified-by-test",
+        "documented-intent",
+        "inferred",
+        "proposed",
+        "unknown"
+      ]
+    },
+    "explanation": {
+      "type": "string"
+    },
+    "freshness": {
+      "additionalProperties": true,
+      "properties": {
+        "findings": {
+          "items": {
+            "additionalProperties": true,
+            "properties": {
+              "code": {
+                "enum": [
+                  "stale-source",
+                  "missing-or-unsafe-source",
+                  "stale-reference",
+                  "missing-anchor",
+                  "missing-or-unsafe-reference"
+                ]
+              },
+              "path": {
+                "type": "string"
+              },
+              "symbol": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "path"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "scope": {
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "current",
+            "stale"
+          ]
+        }
+      },
+      "required": [
+        "status",
+        "scope",
+        "findings"
+      ],
+      "type": "object"
+    },
+    "provenance": {
+      "additionalProperties": true,
+      "properties": {
+        "authority": {
+          "type": "string"
+        },
+        "reviewStatus": {
+          "const": "unreviewed"
+        },
+        "sourceType": {
+          "const": "agent-proposed"
+        }
+      },
+      "required": [
+        "sourceType",
+        "reviewStatus",
+        "authority"
+      ],
+      "type": "object"
+    },
+    "requestId": {
+      "pattern": "^[A-Za-z0-9._-]{1,80}$",
+      "type": "string"
+    },
+    "sourceRefs": {
+      "items": {
+        "$ref": "#/$defs/sourceRef"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "apiVersion",
+    "data",
+    "sourceRefs",
+    "provenance",
+    "evidenceStatus",
+    "freshness",
+    "explanation"
+  ],
+  "title": "ReDown internal agent result envelope 0.1",
+  "type": "object"
+}
