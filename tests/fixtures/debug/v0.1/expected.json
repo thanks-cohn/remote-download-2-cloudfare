@@ -1,0 +1,86 @@
+{
+  "incident": {
+    "debugRecordVersion": "0.1",
+    "caseId": "DBG-900",
+    "summary": "Archived unverified incident",
+    "symptom": "Fixture report only.",
+    "impact": "Blocks deep Nested settings configuration; exact runtime transfer impact is unverified.",
+    "severity": "high",
+    "initialState": "open",
+    "environment": "Reported Chrome extension settings; browser/OS/provider versions and live state unknown.",
+    "firstSeen": null,
+    "privacy": "public-sanitized",
+    "fingerprints": [
+      "archive.fixture"
+    ],
+    "unknowns": [
+      "Chrome reproduction and exact visible depth threshold",
+      "Actual depth-five context-menu creation and transfer destination",
+      "Independent provider-listing or Chrome menu-depth defects",
+      "Remediation, regression tests and deployed outcome"
+    ],
+    "operationIds": [],
+    "foreverLinks": {
+      "status": "unknown",
+      "links": [],
+      "reason": "No accepted ReDown Forever model or resolvable entity IDs exist."
+    },
+    "provenance": {
+      "sourceType": "inferred",
+      "collector": "Codex companion import",
+      "sourceReference": "docs/debug/DBG-001_NESTED_CHILD_DEPTH_DISABLED_STATE.md",
+      "reviewStatus": "unreviewed",
+      "confidence": 0.65,
+      "extensions": {
+        "example.org/collector": {
+          "rawCount": 1
+        }
+      }
+    },
+    "futureOptional": {
+      "nested": [
+        "preserved",
+        {
+          "meaning": "not accepted intent"
+        }
+      ]
+    }
+  },
+  "lifecycle": "open",
+  "historyCount": 1,
+  "latestEvents": [
+    {
+      "debugRecordVersion": "0.1",
+      "eventId": "DBG-900.report",
+      "caseId": "DBG-900",
+      "sequence": 1,
+      "recordedAt": "2026-10-11T01:45:57Z",
+      "occurredOn": null,
+      "kind": "report",
+      "claim": "User reported blocked continuation around two child levels and a root-bucket reselection workaround. No independent Chrome reproduction is recorded.",
+      "evidenceStatus": "reported",
+      "provenance": {
+        "sourceType": "inferred",
+        "collector": "Codex companion import",
+        "sourceReference": "docs/debug/DBG-001_NESTED_CHILD_DEPTH_DISABLED_STATE.md",
+        "reviewStatus": "unreviewed",
+        "confidence": 0.65,
+        "extensions": {
+          "example.org/collector": {
+            "rawCount": 1
+          }
+        }
+      },
+      "sourceRefs": [],
+      "evidenceEventIds": [],
+      "counterEvidenceEventIds": [],
+      "futureOptional": {
+        "keep": [
+          3,
+          2,
+          1
+        ]
+      }
+    }
+  ]
+}

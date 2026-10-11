@@ -1,0 +1,69 @@
+[
+  {
+    "name": "manifest old version unknown fields",
+    "schema": "manifest",
+    "value": {
+      "debugRecordVersion": "0.1",
+      "cases": [],
+      "extension": {
+        "raw": [
+          2,
+          1
+        ]
+      }
+    },
+    "valid": true
+  },
+  {
+    "name": "manifest missing version",
+    "schema": "manifest",
+    "value": {
+      "cases": []
+    },
+    "valid": false
+  },
+  {
+    "name": "manifest unsupported format",
+    "schema": "manifest",
+    "value": {
+      "debugRecordVersion": "0.2",
+      "cases": []
+    },
+    "valid": false
+  },
+  {
+    "name": "manifest invalid ID",
+    "schema": "manifest",
+    "value": {
+      "debugRecordVersion": "0.1",
+      "cases": [
+        {
+          "caseId": "dbg-1",
+          "incidentPath": "i",
+          "historyPath": "h"
+        }
+      ]
+    },
+    "valid": false
+  },
+  {
+    "name": "manifest nonobject entry",
+    "schema": "manifest",
+    "value": {
+      "debugRecordVersion": "0.1",
+      "cases": [
+        null
+      ]
+    },
+    "valid": false
+  },
+  {
+    "name": "event invalid primitives",
+    "schema": "event",
+    "value": {
+      "sequence": "1",
+      "debugRecordVersion": "0.1"
+    },
+    "valid": false
+  }
+]

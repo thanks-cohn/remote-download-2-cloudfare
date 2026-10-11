@@ -23,3 +23,16 @@ Keep runtime transfer behavior and ordinary GUI separate from agent inspection. 
 For Forever Works integration, inspect the actual `thanks-cohn/forever-works` standard, schemas and conformance fixtures first; see [compatibility strategy](docs/agent/FOREVER_WORKS_COMPATIBILITY.md). Keep agent API, Forever API and `foreverVersion` separate. There is no accepted ReDown Forever model yet; never invent matching IDs or promote inferred/agent-proposed intent without acceptance.
 
 Work in coherent small changes. Run relevant existing tests, identify uncovered behaviors explicitly, preserve extension message contracts, and record exact results. M2–M4 capabilities are deferred; discovery advertises only implemented operations.
+
+For incident investigation, read [debug onboarding](docs/debug/README.md), [record design and source audit](docs/debug/DESIGN.md), [debug API contract](docs/debug/API.md), and [actual verification](docs/debug/IMPLEMENTATION_REPORT.md). The sibling debug API is offline, read-only and independent of extension execution and Forever intent. Preserve original debug Markdown and append JSONL events; never turn a source-confirmed cause into a verified Chrome/deployed outcome.
+
+```sh
+node agent/debug/cli.mjs describe --json
+node agent/debug/cli.mjs listIncidents
+node agent/debug/cli.mjs getIncident DBG-001
+node agent/debug/cli.mjs getHistory DBG-001 --json
+node agent/debug/cli.mjs validateDebugRecords --json
+node --test tests/debug-api.test.mjs
+```
+
+Reader snapshots are pinned per API instance; recreate after edits. Unknown fields/provenance survive queries. Review append-only prefixes and validate the complete staged corpus before committing. Do not refresh evidence hashes to hide drift. Debug M2–M5 and the actual DBG-001 editor correction remain unfinished.

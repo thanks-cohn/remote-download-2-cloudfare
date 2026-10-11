@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://redown.dev/debug/0.1/incident.schema.json",
+  "type": "object",
+  "required": [
+    "debugRecordVersion",
+    "caseId",
+    "summary",
+    "symptom",
+    "impact",
+    "severity",
+    "initialState",
+    "environment",
+    "firstSeen",
+    "privacy",
+    "fingerprints",
+    "unknowns",
+    "operationIds",
+    "foreverLinks",
+    "provenance"
+  ],
+  "properties": {
+    "debugRecordVersion": {
+      "const": "0.1"
+    },
+    "caseId": {
+      "$ref": "common.schema.json#/$defs/caseId"
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1
+    },
+    "symptom": {
+      "type": "string",
+      "minLength": 1
+    },
+    "impact": {
+      "type": "string",
+      "minLength": 1
+    },
+    "severity": {
+      "enum": [
+        "low",
+        "medium",
+        "high",
+        "critical"
+      ]
+    },
+    "initialState": {
+      "const": "open"
+    },
+    "environment": {
+      "type": "string",
+      "minLength": 1
+    },
+    "firstSeen": {
+      "$ref": "common.schema.json#/$defs/date"
+    },
+    "privacy": {
+      "const": "public-sanitized"
+    },
+    "fingerprints": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true,
+      "minItems": 1
+    },
+    "unknowns": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "operationIds": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "foreverLinks": {
+      "type": "object",
+      "required": [
+        "status",
+        "links",
+        "reason"
+      ],
+      "properties": {
+        "status": {
+          "const": "unknown"
+        },
+        "links": {
+          "type": "array",
+          "maxItems": 0
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": true
+    },
+    "provenance": {
+      "$ref": "common.schema.json#/$defs/provenance"
+    }
+  },
+  "additionalProperties": true
+}

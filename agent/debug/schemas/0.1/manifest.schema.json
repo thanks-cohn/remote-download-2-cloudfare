@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://redown.dev/debug/0.1/manifest.schema.json",
+  "type": "object",
+  "required": [
+    "debugRecordVersion",
+    "cases"
+  ],
+  "properties": {
+    "debugRecordVersion": {
+      "const": "0.1"
+    },
+    "cases": {
+      "type": "array",
+      "maxItems": 1000,
+      "items": {
+        "type": "object",
+        "required": [
+          "caseId",
+          "incidentPath",
+          "historyPath"
+        ],
+        "properties": {
+          "caseId": {
+            "$ref": "common.schema.json#/$defs/caseId"
+          },
+          "incidentPath": {
+            "type": "string",
+            "minLength": 1
+          },
+          "historyPath": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}
