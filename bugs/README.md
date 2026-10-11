@@ -92,6 +92,12 @@ The primary and additional Simple right-click destinations now share a small row
 
 **Human acceptance:** Under Simple Mode, open a destination `bucket/one/two/three`, click `×` on `one`, verify three folder rows remain visible with no selections, reselect a different root folder and its immediate child without reloading the entire settings page. Create a new folder at both root and deeper levels; verify the creation input is initially blank, no folder is created by selection alone, and the right-click option points to the intended full path. Verify persistence after reopening the extension. Related: BUG-005, BUG-016 and the [debugging case](../docs/debug/DBG-002_SIMPLE_LOCATION_ROWS.md).
 
+### Canonical Simple menu behavior — October 10 clarification
+
+**Exactly ONE pop-out:** `REDOWN → [direct destination items]`. No extra preset submenu and no R2-folder-depth pop-outs. **Label:** explicit Menu label if entered; otherwise use the user-selected automatic-label rule: **lowest/deepest directory (default)** or **highest/root bucket name**. The fallback setting must be selectable in Simple settings; changing the displayed name must not change the actual transfer path. The flat-menu source fix (`c172731`) and default deepest-directory fallback are committed, but the **configurable bucket-name override is not implemented yet**. Ordering is a separate issue: preset Order exists; independent per-extra-option ordering does not.
+
+See [canonical Simple Mode specification and verification matrix](../docs/SIMPLE_MENU_CANONICAL_SPEC_AND_STATUS.md). Do not mark unexecuted regression tests or Chrome verification as passed.
+
 ## BUG-005 — Cloudflare Simple mode cannot add multiple independent locations
 
 **Status:** Open · source-confirmed editor limitation / user-reported requirement
