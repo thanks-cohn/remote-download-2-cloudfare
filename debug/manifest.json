@@ -5,6 +5,11 @@
       "caseId": "DBG-001",
       "incidentPath": "debug/cases/DBG-001.json",
       "historyPath": "debug/cases/DBG-001.events.jsonl"
+    },
+    {
+      "caseId": "DBG-002",
+      "incidentPath": "debug/cases/DBG-002.json",
+      "historyPath": "debug/cases/DBG-002.events.jsonl"
     }
   ]
 }
