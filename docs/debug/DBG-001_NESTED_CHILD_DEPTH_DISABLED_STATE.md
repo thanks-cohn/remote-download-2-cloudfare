@@ -61,3 +61,8 @@ Avoid a tempting one-line change that merely sets `add.disabled=false` *inside* 
 - Automated UI-state and menu-generation tests pass, and a real Chrome manual smoke test confirms the workflow.
 
 **Current conclusion:** The reported two-level ceiling is consistent with a **stale UI disabled-state restoration bug**, not with an explicit two-level restriction in the nested tree model. This is source-verified causation; browser behavior and any additional menu-depth limits remain to be tested.
+
+
+## Implementation update — 2026-10-10
+
+**Fixed in source; human testing pending.** Commit `538006a` updates the editor's action wrapper to run row-specific eligibility reconciliation after restoring temporary disabled controls. Bucket and folder selection/creation now reevaluate the relevant `+ Child` state. Commit `2a5e061` adds deep creation and existing-folder selection regression tests. These changes address the source-confirmed stale-state defect; no arbitrary depth limit was introduced. Automated tests were **not run in this assistant session** because the GitHub checkout could not be retrieved by the execution container (DNS resolution failure). A prior source audit's historical tests do not verify these new changes. The Chrome/browser outcome remains unknown until a human tests deep nesting and right-click routing. Additional provider listing and Chrome context menu limitations remain separately unverified. The incident must remain open until those checks pass.
