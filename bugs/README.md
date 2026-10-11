@@ -119,6 +119,8 @@ Each folder/location row in the **Simple right-click menu editor** needs two ind
 - Retain the compact, functioning Simple Mode layout; add small `×`, `+` and input affordances rather than redesigning the editor.
 - Add DOM regression coverage for middle-row removal, descendant invalidation/reparenting, create at root and deep parent, async create failure, selection/creation separation, and stable unrelated DOM.
 
+**Preferred parent-row removal semantics (follow-up):** Keep descendant rows **in place as reusable empty selectors** rather than immediately deleting them. When a selected upper-level folder is removed with `×`, clear that selection and invalidate the full dependent path. All lower rows remain visible, retaining their layout but no longer claiming their previous folder choices are valid. The user can select a new parent and then reselect valid immediate child folders from the updated dropdowns. Never automatically reuse stale child selections or send to the old path. Disable transfer/save as a fully resolved location until the chain is valid, with a clear prompt such as **Choose a parent to continue**. An explicit **Remove this row and its descendants** action may additionally be offered to discard the whole tail. This is a configuration-only change; no R2 folders or objects are deleted. Test middle/top-row removal, stale asynchronous listing rejection, descendant reselection, sibling preservation and no full-panel rebuild.
+
 **Related:** BUG-014 (dropdown must not fill new-name input), BUG-016 (Simple panel rerender), BUG-005 (independent Simple destinations). This request concerns **Simple right-click menu configuration**, not Upload from Computer or the Nested editor.
 
 
