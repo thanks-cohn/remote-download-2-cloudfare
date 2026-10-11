@@ -14,6 +14,8 @@ const defaultLocationPrefixCache=new Map();
 const presetLocationCache=new Map();
 let uploadLocationPrefixes=[];
 let uploadLocationSegments=[""];
+let uploadLocationLoadVersion=0;
+let uploadLocationTargetKey="";
 
 function uid(){return crypto.randomUUID();}
 function safeUiMessage(message){
@@ -1126,7 +1128,7 @@ function renderUploadLocationBuilder(){
     const input=document.createElement("input");
     input.type="text";
     input.className="upload-path-input";
-    input.value=index===0?"":(segment||"");
+    input.value=""; // Existing selections never fill the new-folder field.
     input.placeholder="Or create a new child…";
     input.hidden=index===0;
 
@@ -1149,23 +1151,11 @@ function renderUploadLocationBuilder(){
       uploadLocationSegments[index]=select.value;
       uploadLocationSegments=uploadLocationSegments.slice(0,index+1);
       syncUploadBuilderPrefix();
-      if(index>0)await materializeUploadBuilderPrefix();
       renderUploadLocationBuilder();
     });
 
-    input.addEventListener("input",()=>{
-      uploadLocationSegments[index]=String(input.value||"").replace(/[\\/\0]/g,"").trim();
-      syncUploadBuilderPrefix();
-    });
-    input.addEventListener("change",async()=>{
-      uploadLocationSegments[index]=String(input.value||"").replace(/[\\/\0]/g,"").trim();
-      await materializeUploadBuilderPrefix();
-      renderUploadLocationBuilder();
-    });
-    input.addEventListener("blur",async()=>{
-      uploadLocationSegments[index]=String(input.value||"").replace(/[\\/\0]/g,"").trim();
-      if(uploadLocationSegments[index])await materializeUploadBuilderPrefix();
-    });
+    // This is a creation draft. Typing, changing and blurring never select or create a folder.
+
 
     add.addEventListener("click",async()=>{
       const current=index===0
@@ -1208,7 +1198,12 @@ async function loadUploadLocations({ preserve = true } = {}) {
   const hint = $("local-location-hint");
   if (!select) return;
 
-  const previous = preserve ? select.value : "";
+  const key=target ? target.accountId+":"+target.bucketName : "";
+  const requestVersion=++uploadLocationLoadVersion;
+  const sameBucket=key===uploadLocationTargetKey;
+  const previous = preserve && sameBucket ? select.value : "";
+  uploadLocationTargetKey=key;
+  if(!sameBucket){uploadLocationPrefixes=[];uploadLocationSegments=[""];}
   select.replaceChildren();
   const rootOption = document.createElement("option");
   rootOption.value = "";
@@ -1232,14 +1227,12 @@ async function loadUploadLocations({ preserve = true } = {}) {
     limit:250
   });
 
+  // Never let an older bucket request repopulate a newly selected bucket.
+  if(requestVersion!==uploadLocationLoadVersion || key!==uploadLocationTargetKey)return;
+  // A saved preset prefix is not proof that a child exists under this bucket.
   uploadLocationPrefixes = result?.ok
     ? (result.children || []).map((child)=>String(child||"").replace(/^\/+|\/+$/g,"")).filter(Boolean)
     : [];
-
-  for (const value of Object.values(profile?.folders || {})) {
-    const clean = String(value || "").replace(/^\/+|\/+$/g, "");
-    if (clean && !uploadLocationPrefixes.includes(clean)) uploadLocationPrefixes.push(clean);
-  }
 
   for (const prefix of uploadLocationPrefixes) {
     const value = String(prefix || "").replace(/^\/+|\/+$/g, "");
