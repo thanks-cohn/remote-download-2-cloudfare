@@ -52,7 +52,7 @@ Local Wrangler sample startup was attempted and diagnosed: template bucket name 
 
 ## Continue from here
 
-Branch: `feat/agent-project-inspection`. PR title/body are prepared in [PR_DRAFT.md](PR_DRAFT.md). Confirm the actual push/PR outcome from the task's final response; a prepared description is not a created PR.
+Branch: `feat/agent-project-inspection`, successfully pushed to origin. Implementation commits: `490201a` (M0 audit) and `a381a0f` (M1 slice). PR title/body are prepared in [PR_DRAFT.md](PR_DRAFT.md). `gh pr create --draft --base main --head feat/agent-project-inspection --title "Audit ReDown and add an offline read-only project inspection API" --body-file docs/agent/PR_DRAFT.md` was attempted and failed: `Post "https://api.github.com/graphql": Forbidden`. **No PR was created.** Network policy is the confirmed blocker; branch push and native Git authentication succeeded.
 
 1. Once `api.github.com` is active, retry `gh api repos/thanks-cohn/remote-download-2-cloudfare --jq .permissions` and draft PR creation. Initial requests failed at the proxy CONNECT tunnel with 403; `gh auth status` alone does not establish missing credentials. Do not request a token before checking restored connectivity/authentication.
 2. Fix the two stale fixture harnesses in a separate focused change, with full suite execution and browser smoke validation. Preserve existing assertions; add RFIS/global mocks and current menu DOM contract deliberately.
