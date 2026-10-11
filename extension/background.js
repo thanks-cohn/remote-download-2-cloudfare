@@ -1649,14 +1649,26 @@ async function buildMenus() {
         contexts:["link","image","video","audio","page"]
       });
       addPresetTree(p, p.menuTree, parentId);
-    } else if(mode==='simple' && p.type==='cloudflare-r2' && Array.isArray(p.simpleOptions) && p.simpleOptions.length){
+    } else if(mode==='simple' && p.type==='cloudflare-r2'){
+      // Simple means one menu level regardless of R2 directory depth.
+      // Keep stable IDs for click routing; labels are presentation only.
       const contexts=["link","image","video","audio","page"];
-      const parentId=`simple:${p.id}`;
-      chrome.contextMenus.create({id:parentId,parentId:ROOT_MENU_ID,title,contexts});
-      chrome.contextMenus.create({id:`quick:${p.id}`,parentId,title:"Default location",contexts});
-      for(const item of p.simpleOptions){
-        if(!item?.id || typeof item.prefix!=="string" || !item.label?.trim())continue;
-        chrome.contextMenus.create({id:`simple-option:${p.id}:${item.id}`,parentId,title:item.label,contexts});
+      const displayName=(label,prefix,bucket)=>{
+        const explicit=String(label||"").trim();
+        if(explicit)return explicit;
+        const segments=String(prefix||"").split("/").filter(Boolean);
+        return segments.at(-1)||bucket||"Destination";
+      };
+      chrome.contextMenus.create({
+        id:`quick:${p.id}`,parentId:ROOT_MENU_ID,
+        title:displayName(p.menuLabel,p.defaultPrefix,p.simpleBucketName||p.bucketName),contexts
+      });
+      for(const item of p.simpleOptions||[]){
+        if(!item?.id || typeof item.prefix!=="string")continue;
+        chrome.contextMenus.create({
+          id:`simple-option:${p.id}:${item.id}`,parentId:ROOT_MENU_ID,
+          title:displayName(item.label,item.prefix,item.bucketName||p.bucketName),contexts
+        });
       }
     } else {
       chrome.contextMenus.create({
