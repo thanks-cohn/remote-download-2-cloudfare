@@ -99,6 +99,29 @@ The Cloudflare **Simple** right-click preset editor exposes one default-location
 
 **Relevant code:** `extension/options.js` `renderProfiles()` and `defaultLocationField()` currently render only a single Cloudflare default-location builder per profile. The menu-tree editor is rendered only for non-Cloudflare profiles.
 
+### October 10 follow-up — remove any location row and create a directory at any level
+
+**Status:** Requested Simple Mode enhancement; implementation and human testing pending.
+
+Each folder/location row in the **Simple right-click menu editor** needs two independent, obvious operations:
+
+1. **`×` Remove row:** Remove that previously selected location segment from this preset configuration, letting the user redirect its destination. Removal MUST NOT delete the R2 folder or objects. Removing a parent row must never silently leave descendants attached to an invalid path: either remove its dependent configured rows as a single explicitly explained configuration operation, or allow the user to reselect the parent while preserving the subordinate drafts in a clearly invalid/pending state. Do not remove unrelated presets or siblings.
+2. **Create new location here:** Every row provides a separate new-folder name input and an explicit Create action scoped to that row's *currently selected parent path*. Existing-location dropdown selection and new-location text entry must be separate state. Selecting an existing folder MUST NOT populate the creation input. After confirmed remote creation, make the created directory available and selected at the correct level, allowing further child rows immediately.
+
+**Acceptance criteria:**
+- A visible, keyboard-accessible `×` exists for every removable Simple Mode location row; its label/tooltip explains **Remove location from menu**, not delete folder.
+- The selected bucket remains explicitly represented. Removing a folder segment can redirect the preset to its valid parent/root; never silently redirect an upload to a different bucket.
+- An inline creation field is available for every eligible folder level, including directly beneath the selected bucket and at deeper child levels; new folders are created only after an explicit Create action.
+- Folder creation uses the exact account, bucket and parent prefix; failure or uncertain remote outcome does not report success or add a fictitious folder.
+- Selection of an existing directory leaves the adjacent creation field empty unless an independently typed draft already exists; drafts are not copied from dropdowns.
+- Adding, removing, or creating one row does not cause the whole Simple settings panel to rerender, lose scroll/focus, overwrite other drafts, or reset unrelated selections (see BUG-016).
+- Configuration changes persist across reopening settings and rebuilding the right-click menu; actual destination paths are verified in tests.
+- Retain the compact, functioning Simple Mode layout; add small `×`, `+` and input affordances rather than redesigning the editor.
+- Add DOM regression coverage for middle-row removal, descendant invalidation/reparenting, create at root and deep parent, async create failure, selection/creation separation, and stable unrelated DOM.
+
+**Related:** BUG-014 (dropdown must not fill new-name input), BUG-016 (Simple panel rerender), BUG-005 (independent Simple destinations). This request concerns **Simple right-click menu configuration**, not Upload from Computer or the Nested editor.
+
+
 ## BUG-006 — Explorer file list expands downward instead of paginating in a bounded scroll area
 
 **Status:** Implemented on default branch (2026-10-10); awaiting installed-Chrome verification, especially large R2 cursor results and keyboard selection
