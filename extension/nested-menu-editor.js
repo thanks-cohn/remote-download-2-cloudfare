@@ -10,11 +10,11 @@
   function selectedOption(select,value,text) {const option=nodeElement('option','',text);option.value=value;select.append(option);}
   async function save(profile) { await context.save(profile); }
   function live(text,bad=false) {lastStatus={text,bad};if(!container)return;const status=container.querySelector('.nested-status');status.textContent=text;status.classList.toggle('bad',bad);}
-  async function run(key,controls,task) {
+  async function run(key,controls,task,reconcile) {
     if(pending.size)return;
     pending.add(key);container.setAttribute("aria-busy","true");const locked=[...container.querySelectorAll("input,select,button")];const previous=locked.map(el=>el.disabled);locked.forEach(el=>el.disabled=true);
     try {await task();} catch(error) {live(error?.message || 'Could not finish. Retry.',true);}
-    finally {pending.delete(key);container.setAttribute("aria-busy","false");locked.forEach((el,index)=>{if(el.isConnected)el.disabled=previous[index];});}
+    finally {pending.delete(key);container.setAttribute("aria-busy","false");locked.forEach((el,index)=>{if(el.isConnected)el.disabled=previous[index];});if(reconcile)reconcile();}
   }
   function render(profiles) {
     if(!container)return;
@@ -53,7 +53,7 @@
           if(root.bucketName!==name)root.children.forEach(M.invalidate);
           root.bucketName=result.bucket?.name || name;root.ready=true;newName.value='';drafts.delete(root.id);
           await save(profile);select.replaceChildren();selectedOption(select,root.bucketName,root.bucketName);select.value=root.bucketName;add.disabled=false;location.textContent=`${root.bucketName} /`;live('Bucket created.');
-        }), 'secondary');
+        },()=>{if(group.isConnected)add.disabled=!root.ready;}), 'secondary');
         const actions=nodeElement('div','nested-actions');
         const add=button('+ Child',()=>run(root.id,[],async()=>{if(!root.ready)return;const fresh=M.blank();root.children.push(fresh);collapsed.delete(root.id);children.hidden=false;fold.textContent='▾';fold.setAttribute('aria-expanded','true');await save(profile);folderRow(root,fresh,children,'',root.ready,0);}));add.disabled=true;add.setAttribute('aria-label','Add a folder inside this bucket');
         const remove=button('Remove',()=>run(root.id,[],async()=>{model.roots=model.roots.filter(item=>item!==root);await save(profile);group.remove();}));remove.setAttribute('aria-label','Remove this bucket from the nested menu only');
@@ -69,7 +69,7 @@
           root.bucketName=select.value;root.ready=true;
           // The adjacent creation field is deliberately untouched.
           await save(profile);location.textContent=`${root.bucketName} /`;children.replaceChildren();for(const node of root.children)folderRow(root,node,children,'',true,0);
-        }));
+        },()=>{if(group.isConnected)add.disabled=!root.ready;}));
         async function populate() {
           try {
             const result=await read({type:'cfBuckets',accountId:profile.accountId});if(!current())return;
@@ -100,7 +100,7 @@
           if(!current())return;
           M.setLocation(node,name);newName.value='';drafts.delete(node.id);
           await save(profile);select.replaceChildren();selectedOption(select,name,name);select.value=name;node.ready=true;add.disabled=false;location.textContent=`${root.bucketName}/${M.path(parentPath,name)}/`;live(`Created ${root.bucketName}/${M.path(parentPath,name)}/`);
-        }),'secondary');create.disabled=true;
+        },()=>{if(group.isConnected)repaint();}),'secondary');create.disabled=true;
         const creator=nodeElement('form','nested-create');creator.append(newName,create);creator.addEventListener('submit',event=>{event.preventDefault();create.click();});
         const add=button('+ Child',()=>run(node.id,[],async()=>{if(!node.ready)return;const fresh=M.blank();node.children.push(fresh);collapsed.delete(node.id);children.hidden=false;fold.textContent='▾';fold.setAttribute('aria-expanded','true');await save(profile);folderRow(root,fresh,children,M.path(parentPath,node.name),true,depth+1);fold.disabled=false;}));add.disabled=true;add.setAttribute('aria-label','Add a child inside this folder');
         const remove=button('Remove',()=>run(node.id,[],async()=>{const siblings=findChildren(root,node.id);const index=siblings.indexOf(node);if(index>=0)siblings.splice(index,1);await save(profile);group.remove();}));remove.setAttribute('aria-label','Remove this menu branch without deleting any Cloudflare folders');
@@ -119,7 +119,7 @@
           M.setLocation(node,select.value);
           // Choosing an existing folder never assigns to newName.value.
           await save(profile);children.replaceChildren();location.textContent=`${root.bucketName}/${M.path(parentPath,node.name)}/`;for(const child of node.children)folderRow(root,child,children,M.path(parentPath,node.name),true,depth+1);
-        }));
+        },()=>{if(group.isConnected)repaint();}));
         if(!parentReady){node.ready=false;repaint();return;}
         (async()=>{
           try {
