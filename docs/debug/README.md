@@ -4,7 +4,7 @@ This is the persistent chronology of investigated defects. Preserve previous ent
 
 | Date | Case | Status | Summary |
 | --- | --- | --- | --- |
-| 2026-10-10 | [DBG-001 — Nested menu stops accepting deeper children](DBG-001_NESTED_CHILD_DEPTH_DISABLED_STATE.md) | **Source cause confirmed; Chrome reproduction and fix pending** | Shared async action wrapper restores stale disabled controls after the folder becomes ready; select/create paths omit the refresh necessary to enable `+ Child`. |
+| 2026-10-10 | [DBG-001 — Nested menu stops accepting deeper children](DBG-001_NESTED_CHILD_DEPTH_DISABLED_STATE.md) | **Source fix committed; human Chrome testing pending** | Stale disabled-state restoration diagnosed; row-local reconciliation correction committed (`538006a`), regression tests added (`2a5e061`). Execution and browser verification pending. |
 
 ## Debugging record policy
 
