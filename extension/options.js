@@ -545,7 +545,7 @@ function simpleFolderPathEditor(profile, host, message, bucketName, initialPrefi
       if(!parentReady){option(selected,"","Select an ancestor first");continue;}
       try{
         const response=await send({type:"cfFolderChildren",accountId:profile.accountId,bucketName:bucket,parentPrefix:parent.join("/"),limit:100000});
-        if(token!==generation||!row.isConnected||bucket!==bucketName())return;
+        if(token!==generation||bucket!==bucketName())return;
         if(!response?.ok)throw new Error(response?.error||"Could not load folders.");
         selected.replaceChildren();option(selected,"",index===0?"/ (bucket root)":"Choose existing child…");
         for(const name of response.children||[])option(selected,name,name);
@@ -556,7 +556,7 @@ function simpleFolderPathEditor(profile, host, message, bucketName, initialPrefi
         }
         selected.value=parts[index]||"";selected.disabled=false;add.disabled=!parts[index];
       }catch(error){
-        if(token!==generation||!row.isConnected)return;
+        if(token!==generation)return;
         selected.replaceChildren();option(selected,"","Folder lookup failed");
         message.textContent=error?.message||"Folder lookup failed.";
       }
